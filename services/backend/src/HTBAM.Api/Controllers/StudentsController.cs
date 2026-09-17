@@ -1,0 +1,295 @@
+using System.Data;
+using System.Net.Mail;
+using System.Text;
+using HTBAM.Api.Support;
+using HTBAM.Application.DTOs;
+using HTBAM.Application.Interfaces;
+using HTBAM.Domain.Entities;
+using HTBAM.Infrastructure.Data;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace HTBAM.Api.Controllers;
+
+[ApiController, Authorize, Route("api/students")]
+public sealed class StudentsController(AppDbContext db, IAuditService audit) : ControllerBase
+{
+    private static readonly string[] CsvHeaders = ["StudentCode", "FullName", "Email", "StudentClassCode", "AnonymousCode"];
+
+    [HttpGet]
+    public async Task<ActionResult> List([FromQuery] string? q, [FromQuery] long? studentClassId, [FromQuery] bool includeInactive = false, [FromQuery] string? status = null, CancellationToken ct = default)
+    {
+        var query = db.StudentsSet.AsNoTracking().Include(s => s.StudentClass).AsQueryable();
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            query = status.Trim().ToLowerInvariant() switch
+            {
+                "active" => query.Where(s => s.IsActive),
+                "inactive" => query.Where(s => !s.IsActive),
+                _ => query
+            };
+        }
+        else if (!includeInactive) query = query.Where(s => s.IsActive);
+        if (studentClassId is not null) query = query.Where(s => s.StudentClassId == studentClassId);
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var keyword = q.Trim();
+            query = query.Where(s => s.StudentCode.Contains(keyword) || s.FullName.Contains(keyword) || s.Email.Contains(keyword) || s.AnonymousCode.Contains(keyword));
+        }
+        return Ok(await query.OrderBy(s => s.StudentCode).Select(s => new
+        {
+            s.Id, s.StudentCode, s.FullName, s.Email, s.StudentClassId,
+            StudentClass = s.StudentClass != null ? s.StudentClass.Code : null,
+            s.AnonymousCode, s.IsActive, s.CreatedAt
+        }).ToListAsync(ct));
+    }
+
+    [HttpGet("{id:long}")]
+    public async Task<ActionResult> Get(long id, CancellationToken ct)
+    {
+        var student = await db.StudentsSet.AsNoTracking().Include(x => x.StudentClass).FirstOrDefaultAsync(x => x.Id == id, ct);
+        return student is null
+            ? NotFound()
+            : Ok(new { student.Id, student.StudentCode, student.FullName, student.Email, student.StudentClassId, StudentClass = student.StudentClass?.Code, student.AnonymousCode, student.IsActive, student.CreatedAt });
+    }
+
+    [HttpPost, Authorize(Roles = "ADMIN")]
+    public async Task<ActionResult> Create(UpsertStudentRequest request, CancellationToken ct)
+    {
+        var error = await Validate(request, null, ct);
+        if (error is not null) return error;
+        var student = new Student
+        {
+            StudentCode = request.StudentCode.Trim(), FullName = request.FullName.Trim(), Email = request.Email.Trim(),
+            StudentClassId = request.StudentClassId, AnonymousCode = request.AnonymousCode.Trim(), IsActive = request.IsActive
+        };
+        db.StudentsSet.Add(student);
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync(UserContext.Id(User), "STUDENT_CREATE", "Student", student.Id.ToString(), new { student.StudentCode }, ct);
+        return CreatedAtAction(nameof(Get), new { id = student.Id }, student);
+    }
+
+    [HttpPut("{id:long}"), Authorize(Roles = "ADMIN")]
+    public async Task<ActionResult> Update(long id, UpsertStudentRequest request, CancellationToken ct)
+    {
+        var student = await db.StudentsSet.FindAsync([id], ct);
+        if (student is null) return NotFound();
+        var error = await Validate(request, id, ct);
+        if (error is not null) return error;
+        student.StudentCode = request.StudentCode.Trim();
+        student.FullName = request.FullName.Trim();
+        student.Email = request.Email.Trim();
+        student.StudentClassId = request.StudentClassId;
+        student.AnonymousCode = request.AnonymousCode.Trim();
+        student.IsActive = request.IsActive;
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync(UserContext.Id(User), "STUDENT_UPDATE", "Student", id.ToString(), new { student.StudentCode, student.IsActive }, ct);
+        return NoContent();
+    }
+
+    [HttpDelete("{id:long}"), Authorize(Roles = "ADMIN")]
+    public async Task<ActionResult> Deactivate(long id, CancellationToken ct)
+    {
+        var student = await db.StudentsSet.FindAsync([id], ct);
+        if (student is null) return NotFound();
+        student.IsActive = false;
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync(UserContext.Id(User), "STUDENT_DEACTIVATE", "Student", id.ToString(), new { student.StudentCode }, ct);
+        return NoContent();
+    }
+
+    [HttpPost("{id:long}/reactivate"), Authorize(Roles = "ADMIN")]
+    public async Task<ActionResult> Reactivate(long id, CancellationToken ct)
+    {
+        var student = await db.StudentsSet.FindAsync([id], ct);
+        if (student is null) return NotFound();
+        student.IsActive = true;
+        await db.SaveChangesAsync(ct);
+        await audit.WriteAsync(UserContext.Id(User), "STUDENT_REACTIVATE", "Student", id.ToString(), new { student.StudentCode }, ct);
+        return NoContent();
+    }
+
+    [HttpPost("import-csv"), Authorize(Roles = "ADMIN"), RequestSizeLimit(10_000_000)]
+    public async Task<ActionResult> ImportCsv(IFormFile file, CancellationToken ct)
+    {
+        if (file is null || file.Length == 0) return BadRequest(new { message = "Thiếu file CSV." });
+
+        var parsedRows = new List<(int Line, string[] Values)>();
+        var parseErrors = new List<CsvImportError>();
+        try
+        {
+            using var reader = new StreamReader(file.OpenReadStream(), new UTF8Encoding(false, true), true);
+            var lineNumber = 0;
+            char delimiter = ',';
+            while (await reader.ReadLineAsync(ct) is { } line)
+            {
+                lineNumber++;
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                if (parsedRows.Count == 0) delimiter = line.Contains(';') && !line.Contains(',') ? ';' : ',';
+                if (!TryParseCsvLine(line, delimiter, out var values, out var parseError))
+                {
+                    parseErrors.Add(new CsvImportError(lineNumber, null, parseError!, false));
+                    continue;
+                }
+                parsedRows.Add((lineNumber, values));
+            }
+        }
+        catch (DecoderFallbackException)
+        {
+            return BadRequest(new { message = "CSV phải sử dụng mã hóa UTF-8 hoặc UTF-8 BOM.", errors = new[] { new { line = 1, field = (string?)null, message = "Không thể đọc ký tự theo UTF-8." } } });
+        }
+
+        if (parsedRows.Count == 0)
+            return BadRequest(new { message = "CSV rỗng hoặc không có dòng hợp lệ.", errors = parseErrors });
+
+        var headers = parsedRows[0].Values.Select(x => x.Trim().TrimStart('\uFEFF')).ToArray();
+        var headerMap = headers.Select((value, index) => (value, index)).GroupBy(x => x.value, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.First().index, StringComparer.OrdinalIgnoreCase);
+        var missingHeaders = CsvHeaders.Where(x => !headerMap.ContainsKey(x)).ToArray();
+        if (missingHeaders.Length > 0)
+        {
+            parseErrors.Add(new CsvImportError(parsedRows[0].Line, null, $"Thiếu cột: {string.Join(", ", missingHeaders)}.", false));
+            return BadRequest(new { message = "Header CSV không hợp lệ.", errors = parseErrors });
+        }
+
+        var errors = new List<CsvImportError>(parseErrors);
+        var candidates = new List<CsvCandidate>();
+        var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenEmails = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenAnonymousCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var row in parsedRows.Skip(1))
+        {
+            string Value(string header) => headerMap[header] < row.Values.Length ? row.Values[headerMap[header]].Trim() : "";
+            var code = Value("StudentCode");
+            var fullName = Value("FullName");
+            var email = Value("Email");
+            var classCode = Value("StudentClassCode");
+            var anonymousCode = Value("AnonymousCode");
+            if (anonymousCode.Length == 0 && code.Length > 0) anonymousCode = $"ANON-{code}";
+            var before = errors.Count;
+
+            RequiredAndLength(errors, row.Line, "StudentCode", code, 64, "MSSV");
+            RequiredAndLength(errors, row.Line, "FullName", fullName, 256, "Họ tên");
+            RequiredAndLength(errors, row.Line, "StudentClassCode", classCode, 64, "Mã lớp");
+            RequiredAndLength(errors, row.Line, "AnonymousCode", anonymousCode, 128, "Mã ẩn danh");
+            if (email.Length > 256) errors.Add(new CsvImportError(row.Line, "Email", "Email không được vượt quá 256 ký tự.", false));
+            else if (email.Length > 0 && !MailAddress.TryCreate(email, out _)) errors.Add(new CsvImportError(row.Line, "Email", $"Email '{email}' không hợp lệ.", false));
+            if (code.Length > 0 && !seenCodes.Add(code)) errors.Add(new CsvImportError(row.Line, "StudentCode", $"MSSV {code} bị trùng trong file CSV.", true));
+            if (email.Length > 0 && !seenEmails.Add(email)) errors.Add(new CsvImportError(row.Line, "Email", $"Email {email} bị trùng trong file CSV.", true));
+            if (anonymousCode.Length > 0 && !seenAnonymousCodes.Add(anonymousCode)) errors.Add(new CsvImportError(row.Line, "AnonymousCode", $"Mã ẩn danh {anonymousCode} bị trùng trong file CSV.", true));
+            if (errors.Count == before) candidates.Add(new CsvCandidate(row.Line, code, fullName, email, classCode, anonymousCode));
+        }
+
+        if (parsedRows.Count == 1)
+            errors.Add(new CsvImportError(parsedRows[0].Line, null, "CSV không có dòng dữ liệu sinh viên.", false));
+        if (errors.Count > 0) return CsvErrorResult(errors);
+
+        ActionResult? finalError = null;
+        var strategy = db.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = db.Database.IsRelational()
+                ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
+                : null;
+
+            var classCodes = candidates.Select(x => x.StudentClassCode).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var classes = await db.StudentClassesSet.AsNoTracking().Where(x => classCodes.Contains(x.Code) && x.IsActive).ToListAsync(ct);
+        var classByCode = classes.ToDictionary(x => x.Code, StringComparer.OrdinalIgnoreCase);
+        var studentCodes = candidates.Select(x => x.StudentCode).ToArray();
+        var emails = candidates.Where(x => x.Email.Length > 0).Select(x => x.Email).ToArray();
+        var anonymousCodes = candidates.Select(x => x.AnonymousCode).ToArray();
+        var existing = await db.StudentsSet.AsNoTracking().Where(x => studentCodes.Contains(x.StudentCode) || anonymousCodes.Contains(x.AnonymousCode) || (x.Email != "" && emails.Contains(x.Email))).ToListAsync(ct);
+        var existingCodes = existing.Select(x => x.StudentCode).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var existingEmails = existing.Where(x => x.Email.Length > 0).Select(x => x.Email).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var existingAnonymousCodes = existing.Select(x => x.AnonymousCode).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var candidate in candidates)
+        {
+            if (!classByCode.ContainsKey(candidate.StudentClassCode))
+                errors.Add(new CsvImportError(candidate.Line, "StudentClassCode", $"Lớp {candidate.StudentClassCode} không tồn tại hoặc đã ngừng hoạt động.", false));
+            if (existingCodes.Contains(candidate.StudentCode))
+                errors.Add(new CsvImportError(candidate.Line, "StudentCode", $"MSSV {candidate.StudentCode} đã tồn tại.", true));
+            if (candidate.Email.Length > 0 && existingEmails.Contains(candidate.Email))
+                errors.Add(new CsvImportError(candidate.Line, "Email", $"Email {candidate.Email} đã tồn tại.", true));
+            if (existingAnonymousCodes.Contains(candidate.AnonymousCode))
+                errors.Add(new CsvImportError(candidate.Line, "AnonymousCode", $"Mã ẩn danh {candidate.AnonymousCode} đã tồn tại.", true));
+        }
+
+            if (errors.Count > 0)
+            {
+                if (transaction is not null) await transaction.RollbackAsync(ct);
+                finalError = CsvErrorResult(errors);
+                return;
+            }
+
+            var createdAt = DateTime.UtcNow;
+        foreach (var candidate in candidates)
+        {
+            db.StudentsSet.Add(new Student
+            {
+                StudentCode = candidate.StudentCode, FullName = candidate.FullName, Email = candidate.Email,
+                StudentClassId = classByCode[candidate.StudentClassCode].Id, AnonymousCode = candidate.AnonymousCode,
+                IsActive = true, CreatedAt = createdAt
+            });
+        }
+            await db.SaveChangesAsync(ct);
+            if (transaction is not null) await transaction.CommitAsync(ct);
+        });
+
+        if (finalError is not null) return finalError;
+        await audit.WriteAsync(UserContext.Id(User), "STUDENT_IMPORT_CSV", "Student", "bulk", new { inserted = candidates.Count, errorCount = 0 }, ct);
+        return Ok(new { inserted = candidates.Count, errors = Array.Empty<CsvImportError>(), message = $"Đã import {candidates.Count} sinh viên" });
+    }
+
+    private ActionResult CsvErrorResult(List<CsvImportError> errors)
+    {
+        var body = new { message = "CSV có dữ liệu chưa hợp lệ; chưa sinh viên nào được import.", errors = errors.Select(x => new { line = x.Line, field = x.Field, message = x.Message }).ToArray() };
+        return errors.All(x => x.IsConflict) ? Conflict(body) : BadRequest(body);
+    }
+
+    private static void RequiredAndLength(List<CsvImportError> errors, int line, string field, string value, int maxLength, string label)
+    {
+        if (string.IsNullOrWhiteSpace(value)) errors.Add(new CsvImportError(line, field, $"Thiếu {label}.", false));
+        else if (value.Length > maxLength) errors.Add(new CsvImportError(line, field, $"{label} không được vượt quá {maxLength} ký tự.", false));
+    }
+
+    private async Task<ActionResult?> Validate(UpsertStudentRequest request, long? id, CancellationToken ct)
+    {
+        var code = request.StudentCode.Trim();
+        var anonymousCode = request.AnonymousCode.Trim();
+        var email = request.Email.Trim();
+        if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(request.FullName) || string.IsNullOrWhiteSpace(anonymousCode)) return BadRequest("Thiếu MSSV/họ tên/mã ẩn danh.");
+        if (email.Length > 0 && !MailAddress.TryCreate(email, out _)) return BadRequest("Email không hợp lệ.");
+        if (request.StudentClassId is not null && !await db.StudentClassesSet.AnyAsync(x => x.Id == request.StudentClassId && x.IsActive, ct)) return BadRequest("Lớp sinh hoạt không hợp lệ.");
+        if (await db.StudentsSet.AnyAsync(x => x.Id != id && (x.StudentCode == code || x.AnonymousCode == anonymousCode || (email != "" && x.Email == email)), ct)) return Conflict("Trùng MSSV/email/mã ẩn danh.");
+        return null;
+    }
+
+    private static bool TryParseCsvLine(string line, char delimiter, out string[] values, out string? error)
+    {
+        var cells = new List<string>();
+        var value = new StringBuilder();
+        var quoted = false;
+        for (var i = 0; i < line.Length; i++)
+        {
+            var character = line[i];
+            if (character == '"')
+            {
+                if (quoted && i + 1 < line.Length && line[i + 1] == '"') { value.Append('"'); i++; }
+                else quoted = !quoted;
+            }
+            else if (character == delimiter && !quoted) { cells.Add(value.ToString()); value.Clear(); }
+            else value.Append(character);
+        }
+        if (quoted) { values = []; error = "Dấu ngoặc kép trong CSV chưa được đóng."; return false; }
+        cells.Add(value.ToString());
+        values = cells.ToArray();
+        error = null;
+        return true;
+    }
+
+    private sealed record CsvCandidate(int Line, string StudentCode, string FullName, string Email, string StudentClassCode, string AnonymousCode);
+    private sealed record CsvImportError(int Line, string? Field, string Message, bool IsConflict);
+}

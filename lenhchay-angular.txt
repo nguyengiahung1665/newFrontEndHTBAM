@@ -1,0 +1,6 @@
+cd infra
+docker compose down
+docker compose build --no-cache web backend
+docker compose up -d --force-recreate
+docker compose ps
+start http://127.0.0.1:5173

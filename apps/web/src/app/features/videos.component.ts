@@ -1,0 +1,171 @@
+import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
+import { ApiService } from '../core/api.service';
+import { Video } from '../core/models';
+import { ModalComponent, PageTitleComponent, errorText, fmtDate } from '../shared/ui';
+
+@Component({
+  standalone: true,
+  imports: [FormsModule, PageTitleComponent, ModalComponent],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `
+    <app-page-title title="Dữ liệu video" subtitle="Quản lý, xem trước và theo dõi trạng thái xử lý video.">
+      <button type="button" (click)="openUpload()">+ Tải video lên</button>
+    </app-page-title>
+
+    @if (error()) { <div class="error-box">{{ error() }}</div> }
+    @if (message()) { <div class="success-box">{{ message() }}</div> }
+    @if (loading()) { <div class="notice">Đang tải danh sách video…</div> }
+
+    <div class="filter-bar">
+      <label class="grow">Tìm video<input [(ngModel)]="search" placeholder="Tên file video…" /></label>
+      <label>Trạng thái
+        <select [(ngModel)]="statusFilter">
+          <option value="">Tất cả</option>
+          <option value="READY">Hoàn tất</option>
+          <option value="PROCESSING">Đang xử lý</option>
+          <option value="UPLOADED">Chờ xử lý</option>
+          <option value="FAILED">Lỗi</option>
+        </select>
+      </label>
+      <button type="button" class="secondary" (click)="clearFilters()">Xóa lọc</button>
+    </div>
+
+    <section class="card table-card">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Tên file</th><th>Dung lượng</th><th>Ngày tải lên</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+          <tbody>
+            @for (video of filteredItems(); track video.id) {
+              <tr>
+                <td><span class="cell-title">{{ video.fileName }}</span><small>{{ video.contentType }}</small></td>
+                <td>{{ fileSize(video.sizeBytes) }}</td>
+                <td>{{ date(video.uploadedAt) }}</td>
+                <td><span class="badge" [class.blue]="video.status === 'PROCESSING' || video.status === 'UPLOADED'" [class.danger]="video.status === 'FAILED'">{{ statusLabel(video.status) }}</span></td>
+                <td>
+                  <div class="inline-actions">
+                    <button type="button" class="secondary small" [disabled]="video.status !== 'READY'" (click)="preview(video)">Xem trước</button>
+                    <button type="button" class="danger small" (click)="pendingDelete.set(video)">Xóa</button>
+                  </div>
+                </td>
+              </tr>
+            } @empty {
+              <tr><td colspan="5" class="empty">Không có video phù hợp.</td></tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    @if (uploadOpen()) {
+      <app-modal title="Tải video lên" [busy]="uploading()" size="md" (close)="closeUpload()">
+        <div class="stack">
+          <label class="drop-zone">
+            <div>
+              <div class="upload-icon">▶</div>
+              <strong>{{ uploadFile()?.name || 'Kéo thả file video vào đây' }}</strong>
+              <small>{{ uploadFile() ? fileSize(uploadFile()!.size) : 'MP4, AVI, MKV — chọn file từ máy tính' }}</small>
+            </div>
+            <input type="file" accept="video/*,.mkv" [disabled]="uploading()" (change)="chooseFile($event)" />
+          </label>
+          <div class="modal-footer" style="margin:0 -20px -20px">
+            <button type="button" class="secondary" [disabled]="uploading()" (click)="closeUpload()">Hủy</button>
+            <button type="button" [disabled]="!uploadFile() || uploading()" (click)="upload()">{{ uploading() ? 'Đang tải lên…' : 'Tải lên' }}</button>
+          </div>
+        </div>
+      </app-modal>
+    }
+
+    @if (previewUrl()) {
+      <div class="modal-backdrop" (mousedown)="previewUrl.set('')">
+        <section class="modal-dialog modal-lg" (mousedown)="$event.stopPropagation()">
+          <header><h3>Xem trước video</h3><button type="button" class="modal-close" aria-label="Đóng" (click)="previewUrl.set('')">×</button></header>
+          <div class="modal-body"><video class="video-preview" controls autoplay [src]="previewUrl()"></video></div>
+        </section>
+      </div>
+    }
+
+    @if (pendingDelete()) {
+      <app-modal title="Xóa video" size="sm" (close)="pendingDelete.set(null)">
+        <p>Bạn có chắc muốn xóa <b>{{ pendingDelete()!.fileName }}</b>? Thao tác này không thể hoàn tác.</p>
+        <div class="modal-footer" style="margin:20px -20px -20px">
+          <button type="button" class="secondary" (click)="pendingDelete.set(null)">Hủy</button>
+          <button type="button" class="danger" (click)="remove()">Xóa video</button>
+        </div>
+      </app-modal>
+    }
+  `,
+})
+export class VideosComponent implements OnInit {
+  private readonly api = inject(ApiService);
+  readonly items = signal<Video[]>([]);
+  readonly error = signal('');
+  readonly message = signal('');
+  readonly loading = signal(false);
+  readonly uploadOpen = signal(false);
+  readonly uploadFile = signal<File | null>(null);
+  readonly uploading = signal(false);
+  readonly previewUrl = signal('');
+  readonly pendingDelete = signal<Video | null>(null);
+  readonly date = fmtDate;
+  search = '';
+  statusFilter = '';
+
+  filteredItems(): Video[] {
+    const query = this.search.trim().toLowerCase();
+    return this.items().filter((item) =>
+      (!query || item.fileName.toLowerCase().includes(query)) &&
+      (!this.statusFilter || item.status === this.statusFilter),
+    );
+  }
+
+  ngOnInit(): void { this.load(); }
+
+  load(): void {
+    this.loading.set(true);
+    this.api.videos().subscribe({
+      next: (items) => { this.items.set(items); this.loading.set(false); },
+      error: (error) => { this.error.set(errorText(error)); this.loading.set(false); },
+    });
+  }
+
+  openUpload(): void { this.uploadFile.set(null); this.uploadOpen.set(true); }
+  closeUpload(): void { if (!this.uploading()) this.uploadOpen.set(false); }
+  chooseFile(event: Event): void { this.uploadFile.set((event.target as HTMLInputElement).files?.[0] ?? null); }
+
+  upload(): void {
+    const file = this.uploadFile();
+    if (!file || this.uploading()) return;
+    this.uploading.set(true);
+    this.error.set('');
+    this.api.uploadVideo(file).subscribe({
+      next: () => {
+        this.uploading.set(false);
+        this.uploadOpen.set(false);
+        this.message.set('Tải video lên thành công.');
+        this.load();
+      },
+      error: (error) => { this.error.set(errorText(error)); this.uploading.set(false); },
+    });
+  }
+
+  preview(video: Video): void {
+    this.api.previewVideo(video.id).subscribe({
+      next: (result) => this.previewUrl.set(result.url),
+      error: (error) => this.error.set(errorText(error)),
+    });
+  }
+
+  remove(): void {
+    const video = this.pendingDelete();
+    if (!video) return;
+    this.api.deleteVideo(video.id).subscribe({
+      next: () => { this.pendingDelete.set(null); this.message.set('Đã xóa video.'); this.load(); },
+      error: (error) => this.error.set(errorText(error)),
+    });
+  }
+
+  clearFilters(): void { this.search = ''; this.statusFilter = ''; }
+  fileSize(bytes: number): string { return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
+  statusLabel(status: string): string { return ({ READY: 'Hoàn tất', PROCESSING: 'Đang xử lý', UPLOADED: 'Chờ xử lý', FAILED: 'Lỗi' } as Record<string, string>)[status] ?? status; }
+}

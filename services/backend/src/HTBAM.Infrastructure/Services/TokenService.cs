@@ -1,0 +1,6 @@
+using System.IdentityModel.Tokens.Jwt; using System.Security.Claims; using System.Text; using HTBAM.Application.DTOs; using HTBAM.Application.Interfaces; using HTBAM.Domain.Entities; using Microsoft.Extensions.Configuration; using Microsoft.IdentityModel.Tokens;
+namespace HTBAM.Infrastructure.Services;
+public sealed class TokenService(IConfiguration config):ITokenService
+{
+ public LoginResponse Create(User user,string[] roles){var secret=config["Jwt:Secret"]??throw new InvalidOperationException("Jwt:Secret missing");var expires=DateTime.UtcNow.AddHours(8);var claims=new List<Claim>{new(JwtRegisteredClaimNames.Sub,user.Id.ToString()),new(ClaimTypes.NameIdentifier,user.Id.ToString()),new(ClaimTypes.Name,user.UserName),new("full_name",user.FullName),new("token_version",user.TokenVersion.ToString())};claims.AddRange(roles.Select(r=>new Claim(ClaimTypes.Role,r)));var token=new JwtSecurityToken(config["Jwt:Issuer"],config["Jwt:Audience"],claims,expires:expires,signingCredentials:new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret)),SecurityAlgorithms.HmacSha256));return new LoginResponse(new JwtSecurityTokenHandler().WriteToken(token),expires,user.Id,user.FullName,roles,user.TokenVersion);}
+}

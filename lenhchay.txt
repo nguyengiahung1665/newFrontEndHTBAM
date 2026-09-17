@@ -1,0 +1,12 @@
+cd infra
+docker compose up -d
+docker compose ps
+start http://127.0.0.1:5173
+
+
+các địa chỉ:
+Web      : http://127.0.0.1:5173
+Backend  : http://127.0.0.1:5000
+AI       : http://127.0.0.1:8001
+MinIO    : http://127.0.0.1:9001
+SQL      : localhost:1433

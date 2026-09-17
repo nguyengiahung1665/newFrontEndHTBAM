@@ -1,0 +1,40 @@
+**/bin/
+**/obj/
+**/node_modules/
+**/.vite/
+**/__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+infra/.env
+**/.env
+.vscode/
+.idea/
+*.user
+*.suo
+*.log
+storage/
+
+# Angular generated files
+node_modules/
+.angular/
+dist/
+apps/web/.angular/
+apps/web/dist/
+
+# Runtime temporary backups
+.runtime-fix-backup-*/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
