@@ -32,6 +32,25 @@ public sealed class Student : Entity
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 public sealed class Teacher : Entity { public string TeacherCode { get; set; } = ""; public string FullName { get; set; } = ""; public string Email { get; set; } = ""; public long? UserId { get; set; } public long? DepartmentId { get; set; } public string? Note { get; set; } public bool IsActive { get; set; } = true; }
+public sealed class ManagementAssignment : Entity
+{
+    public long TeacherId { get; set; }
+    public Teacher Teacher { get; set; } = null!;
+    public string PositionType { get; set; } = "";
+    public long? FacultyId { get; set; }
+    public Faculty? Faculty { get; set; }
+    public long? DepartmentId { get; set; }
+    public Department? Department { get; set; }
+    public DateTime EffectiveFrom { get; set; } = DateTime.UtcNow;
+    public DateTime? EffectiveTo { get; set; }
+    public bool IsActive { get; set; } = true;
+    public long? AssignedByUserId { get; set; }
+    public User? AssignedByUser { get; set; }
+    public long? AssignedByTeacherId { get; set; }
+    public Teacher? AssignedByTeacher { get; set; }
+    public string? Note { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
 public sealed class Course : Entity { public string Code { get; set; } = ""; public string Name { get; set; } = ""; public long? DepartmentId { get; set; } public int Credits { get; set; } = 3; public string? Note { get; set; } public bool IsActive { get; set; } = true; }
 public sealed class ClassSection : Entity { public string Code { get; set; } = ""; public string Name { get; set; } = ""; public long CourseId { get; set; } public Course Course { get; set; } = null!; public long TeacherId { get; set; } public Teacher Teacher { get; set; } = null!; public string Semester { get; set; } = ""; public string AcademicYear { get; set; } = ""; public string? Note { get; set; } public bool IsActive { get; set; } = true; public string? AutoComment { get; set; } public string? AutoCommentProvider { get; set; } public DateTime? AutoCommentGeneratedAt { get; set; } }
 public sealed class Enrollment { public long ClassSectionId { get; set; } public ClassSection ClassSection { get; set; } = null!; public long StudentId { get; set; } public Student Student { get; set; } = null!; public DateTime EnrolledAt { get; set; } = DateTime.UtcNow; }
@@ -116,6 +135,8 @@ public sealed class Session : Entity
 {
     public long ClassSectionId { get; set; }
     public ClassSection ClassSection { get; set; } = null!;
+    public long OriginalTeacherId { get; set; }
+    public Teacher OriginalTeacher { get; set; } = null!;
     public long? RoomId { get; set; }
     public long? CameraId { get; set; }
     public long? VideoId { get; set; }
@@ -129,6 +150,24 @@ public sealed class Session : Entity
     public string? LecturerComment { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public byte[] RowVersion { get; set; } = Array.Empty<byte>();
+}
+public sealed class SessionSubstitution : Entity
+{
+    public long SessionId { get; set; }
+    public Session Session { get; set; } = null!;
+    public long OriginalTeacherId { get; set; }
+    public Teacher OriginalTeacher { get; set; } = null!;
+    public long SubstituteTeacherId { get; set; }
+    public Teacher SubstituteTeacher { get; set; } = null!;
+    public long? AssignedByUserId { get; set; }
+    public User? AssignedByUser { get; set; }
+    public long? AssignedByTeacherId { get; set; }
+    public Teacher? AssignedByTeacher { get; set; }
+    public string Reason { get; set; } = "";
+    public string Status { get; set; } = "ACTIVE";
+    public DateTime AssignedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? CancelledAt { get; set; }
+    public string? Note { get; set; }
 }
 public sealed class SessionStudent { public long SessionId { get; set; } public Session Session { get; set; } = null!; public long StudentId { get; set; } public Student Student { get; set; } = null!; }
 public sealed class AnalysisJob : Entity { public long SessionId { get; set; } public Session Session { get; set; } = null!; public string CorrelationId { get; set; } = Guid.NewGuid().ToString("N"); public string ExternalJobId { get; set; } = ""; public string Status { get; set; } = "CREATED"; public string ModelVersion { get; set; } = "not-loaded"; public DateTime CreatedAt { get; set; } = DateTime.UtcNow; public DateTime? StartedAt { get; set; } public DateTime? EndedAt { get; set; } public string? ErrorMessage { get; set; } }

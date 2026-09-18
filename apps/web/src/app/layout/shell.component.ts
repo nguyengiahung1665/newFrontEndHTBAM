@@ -59,6 +59,7 @@ interface NavigationItem {
           <div class="nav-group">
             <p class="nav-heading">Không gian làm việc</p>
             @for (link of workLinks; track link.to) {
+              @if (link.to !== '/organization' || auth.canManageStructure()) {
               <a
                 [routerLink]="link.to"
                 routerLinkActive="active"
@@ -84,6 +85,7 @@ interface NavigationItem {
                 </span>
                 <span class="nav-label">{{ link.label }}</span>
               </a>
+              }
             }
           </div>
 
@@ -164,6 +166,7 @@ export class ShellComponent implements OnInit {
     { to: '/', label: 'Tổng quan', icon: 'grid' },
     { to: '/students', label: 'Sinh viên', icon: 'users' },
     { to: '/management', label: 'Danh mục & lớp học', icon: 'book' },
+    { to: '/organization', label: 'Cơ cấu & phân quyền', icon: 'users' },
     { to: '/videos', label: 'Dữ liệu video', icon: 'video' },
     { to: '/sessions', label: 'Buổi học', icon: 'calendar' },
     { to: '/alerts', label: 'Cảnh báo', icon: 'bell' },

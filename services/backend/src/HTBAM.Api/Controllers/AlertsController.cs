@@ -23,10 +23,10 @@ public sealed class AlertsController(AppDbContext db, IAuditService audit) : Con
             if (!await AccessScope.CanAccessSessionAsync(db, User, sessionId.Value, ct)) return Forbid();
             query = query.Where(x => x.SessionId == sessionId);
         }
-        else if (User.IsInRole("LECTURER"))
+        else
         {
             var teacherId = await AccessScope.TeacherIdAsync(db, User, ct);
-            var allowedSessionIds = db.SessionsSet.Where(s => s.ClassSection.TeacherId == teacherId).Select(s => s.Id);
+            var allowedSessionIds = AccessScope.Sessions(db, User, teacherId).Select(s => s.Id);
             query = query.Where(x => allowedSessionIds.Contains(x.SessionId));
         }
 
@@ -40,20 +40,20 @@ public sealed class AlertsController(AppDbContext db, IAuditService audit) : Con
 
     public record NoteReq(string? Note);
 
-    [HttpPost("{id:long}/ack"), Authorize(Roles = "ADMIN,LECTURER")]
+    [HttpPost("{id:long}/ack"), Authorize(Roles = "LECTURER")]
     public Task<ActionResult> Ack(long id, NoteReq request, CancellationToken ct) => Transition(id, "ACK", request.Note, ct);
 
-    [HttpPost("{id:long}/close"), Authorize(Roles = "ADMIN,LECTURER")]
+    [HttpPost("{id:long}/close"), Authorize(Roles = "LECTURER")]
     public Task<ActionResult> Close(long id, NoteReq request, CancellationToken ct) => Transition(id, "CLOSED", request.Note, ct);
 
-    [HttpPost("{id:long}/reopen"), Authorize(Roles = "ADMIN,LECTURER")]
+    [HttpPost("{id:long}/reopen"), Authorize(Roles = "LECTURER")]
     public Task<ActionResult> Reopen(long id, NoteReq request, CancellationToken ct) => Transition(id, "OPEN", request.Note, ct);
 
     private async Task<ActionResult> Transition(long id, string target, string? note, CancellationToken ct)
     {
         var alert = await db.AlertsSet.FirstOrDefaultAsync(x => x.Id == id, ct);
         if (alert is null) return NotFound();
-        if (!await AccessScope.CanAccessSessionAsync(db, User, alert.SessionId, ct)) return Forbid();
+        if (!await AccessScope.CanOperateSessionAsync(db, User, alert.SessionId, ct)) return Forbid();
         alert.Status = target;
         alert.LecturerNote = string.IsNullOrWhiteSpace(note) ? alert.LecturerNote : note.Trim();
         if (target == "ACK") alert.AcknowledgedAt = DateTime.UtcNow;

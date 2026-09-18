@@ -43,6 +43,7 @@ public sealed class SessionService(IAppDbContext db, IAiClient ai, ISummaryServi
         var s = new Session
         {
             ClassSectionId = r.ClassSectionId,
+            OriginalTeacherId = classSection.TeacherId,
             RoomId = r.RoomId,
             CameraId = r.CameraId,
             VideoId = r.VideoId,

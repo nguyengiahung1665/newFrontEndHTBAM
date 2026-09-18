@@ -3,6 +3,7 @@ import {
 } from '@angular/common/http';
 import {
   Component,
+  HostListener,
   OnInit,
   computed,
   inject,
@@ -43,7 +44,7 @@ import {
       title="Hồ sơ sinh viên"
       subtitle="Quản lý thông tin, lớp sinh hoạt và dữ liệu nhận diện sinh viên."
     >
-      @if (auth.isAdmin()) {
+      @if (auth.canCreateStudents()) {
         <button
           type="button"
           (click)="openCreateStudent()"
@@ -133,7 +134,7 @@ import {
           </button>
         </div>
 
-        @if (auth.isAdmin()) {
+        @if (auth.canCreateStudents()) {
           <div class="student-import-actions">
             <button type="button" class="secondary" (click)="openImportModal()">Import CSV</button>
 
@@ -200,8 +201,9 @@ import {
                     }}
                   </span>
                 </td>
-                <td>
-                  <div class="inline-actions">
+                <td class="menu-cell">
+                  <button type="button" class="icon-button" aria-label="Thao tác" (click)="toggleMenu(student.id, $event)">⋮</button>
+                  @if (openMenuId() === student.id) { <div class="action-menu">
                     <a
                       class="button-link"
                       [routerLink]="[
@@ -213,7 +215,7 @@ import {
                       Khuôn mặt
                     </a>
 
-                    @if (auth.isAdmin()) {
+                    @if (auth.canEditStudents()) {
                       <button
                         type="button"
                         class="secondary small"
@@ -252,7 +254,7 @@ import {
                         </button>
                       }
                     }
-                  </div>
+                  </div> }
                 </td>
               </tr>
             } @empty {
@@ -518,6 +520,11 @@ export class StudentsComponent
   readonly selectedImportFile = signal<File | null>(null);
   readonly error = signal('');
   readonly message = signal('');
+  readonly openMenuId = signal<number | null>(null);
+
+  @HostListener('document:click') closeMenu(): void { this.openMenuId.set(null); }
+  @HostListener('document:keydown.escape') closeMenuOnEscape(): void { this.openMenuId.set(null); }
+  toggleMenu(id: number, event: Event): void { event.stopPropagation(); this.openMenuId.update(current => current === id ? null : id); }
 
   readonly importErrors =
     signal<any[]>([]);

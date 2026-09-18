@@ -7,6 +7,11 @@ public sealed class ApiExceptionMiddleware(RequestDelegate next, ILogger<ApiExce
     public async Task Invoke(HttpContext context)
     {
         try { await next(context); }
+        catch (OperationCanceledException ex) when (context.RequestAborted.IsCancellationRequested)
+        {
+            logger.LogInformation(ex, "Request aborted by client");
+            if (!context.Response.HasStarted) context.Response.StatusCode = 499;
+        }
         catch (KeyNotFoundException ex) { await Write(context, 404, "NOT_FOUND", ex.Message); }
         catch (DbUpdateConcurrencyException ex) { await Write(context, 409, "CONCURRENCY_CONFLICT", "Dữ liệu vừa được thay đổi bởi thao tác khác. Hãy tải lại và thử lại."); logger.LogWarning(ex, "Concurrency conflict"); }
         catch (DbUpdateException ex) { await Write(context, 409, "DATA_CONFLICT", "Dữ liệu vi phạm ràng buộc hoặc đã tồn tại."); logger.LogWarning(ex, "Database conflict"); }

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostListener, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ApiService } from '../core/api.service';
 import { Video } from '../core/models';
@@ -42,11 +42,12 @@ import { ModalComponent, PageTitleComponent, errorText, fmtDate } from '../share
                 <td>{{ fileSize(video.sizeBytes) }}</td>
                 <td>{{ date(video.uploadedAt) }}</td>
                 <td><span class="badge" [class.blue]="video.status === 'PROCESSING' || video.status === 'UPLOADED'" [class.danger]="video.status === 'FAILED'">{{ statusLabel(video.status) }}</span></td>
-                <td>
-                  <div class="inline-actions">
+                <td class="menu-cell">
+                  <button type="button" class="icon-button" aria-label="Thao tác" (click)="toggleMenu(video.id,$event)">⋮</button>
+                  @if(openMenuId()===video.id){<div class="action-menu">
                     <button type="button" class="secondary small" [disabled]="video.status !== 'READY'" (click)="preview(video)">Xem trước</button>
                     <button type="button" class="danger small" (click)="pendingDelete.set(video)">Xóa</button>
-                  </div>
+                  </div>}
                 </td>
               </tr>
             } @empty {
@@ -107,6 +108,7 @@ export class VideosComponent implements OnInit {
   readonly uploading = signal(false);
   readonly previewUrl = signal('');
   readonly pendingDelete = signal<Video | null>(null);
+  readonly openMenuId = signal<number | null>(null);
   readonly date = fmtDate;
   search = '';
   statusFilter = '';
@@ -120,6 +122,10 @@ export class VideosComponent implements OnInit {
   }
 
   ngOnInit(): void { this.load(); }
+
+  @HostListener('document:click') closeMenu(): void { this.openMenuId.set(null); }
+  @HostListener('document:keydown.escape') closeMenuOnEscape(): void { this.openMenuId.set(null); }
+  toggleMenu(id: number, event: Event): void { event.stopPropagation(); this.openMenuId.update(current => current === id ? null : id); }
 
   load(): void {
     this.loading.set(true);

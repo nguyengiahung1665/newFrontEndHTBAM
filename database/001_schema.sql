@@ -1,6 +1,13 @@
 /* HTBAM Web System v3 - Fresh schema for SQL Server
    If you have never run v1/v2, run 001 -> 002 -> 003(optional). Do NOT run legacy/004.
 */
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+SET ANSI_PADDING ON;
+SET ANSI_WARNINGS ON;
+SET ARITHABORT ON;
+SET CONCAT_NULL_YIELDS_NULL ON;
+SET NUMERIC_ROUNDABORT OFF;
 SET XACT_ABORT ON;
 GO
 
@@ -83,6 +90,29 @@ CREATE TABLE Teachers(
  CONSTRAINT FK_Teacher_Department FOREIGN KEY(DepartmentId) REFERENCES Departments(Id)
 );
 CREATE UNIQUE INDEX UX_Teacher_User_NotNull ON Teachers(UserId) WHERE UserId IS NOT NULL;
+CREATE TABLE ManagementAssignments(
+ Id bigint IDENTITY PRIMARY KEY,
+ TeacherId bigint NOT NULL,
+ PositionType nvarchar(32) NOT NULL,
+ FacultyId bigint NULL,
+ DepartmentId bigint NULL,
+ EffectiveFrom datetime2 NOT NULL DEFAULT SYSUTCDATETIME(),
+ EffectiveTo datetime2 NULL,
+ IsActive bit NOT NULL DEFAULT 1,
+ AssignedByUserId bigint NULL,
+ AssignedByTeacherId bigint NULL,
+ Note nvarchar(max) NULL,
+ CreatedAt datetime2 NOT NULL DEFAULT SYSUTCDATETIME(),
+ CONSTRAINT FK_Mgmt_Teacher FOREIGN KEY(TeacherId) REFERENCES Teachers(Id),
+ CONSTRAINT FK_Mgmt_Faculty FOREIGN KEY(FacultyId) REFERENCES Faculties(Id),
+ CONSTRAINT FK_Mgmt_Department FOREIGN KEY(DepartmentId) REFERENCES Departments(Id),
+ CONSTRAINT FK_Mgmt_AssignedByUser FOREIGN KEY(AssignedByUserId) REFERENCES Users(Id),
+ CONSTRAINT FK_Mgmt_AssignedByTeacher FOREIGN KEY(AssignedByTeacherId) REFERENCES Teachers(Id),
+ CONSTRAINT CK_Mgmt_Position CHECK(PositionType IN('FACULTY_HEAD','DEPARTMENT_HEAD')),
+ CONSTRAINT CK_Mgmt_Scope CHECK((PositionType='FACULTY_HEAD' AND FacultyId IS NOT NULL AND DepartmentId IS NULL) OR (PositionType='DEPARTMENT_HEAD' AND DepartmentId IS NOT NULL))
+);
+CREATE UNIQUE INDEX UX_Mgmt_Active_FacultyHead ON ManagementAssignments(FacultyId) WHERE IsActive = 1 AND PositionType = 'FACULTY_HEAD' AND FacultyId IS NOT NULL;
+CREATE UNIQUE INDEX UX_Mgmt_Active_DepartmentHead ON ManagementAssignments(DepartmentId) WHERE IsActive = 1 AND PositionType = 'DEPARTMENT_HEAD' AND DepartmentId IS NOT NULL;
 CREATE TABLE Courses(
  Id bigint IDENTITY PRIMARY KEY,
  Code nvarchar(64) NOT NULL UNIQUE,
@@ -227,6 +257,7 @@ CREATE TABLE AttendancePolicies(
 CREATE TABLE Sessions(
  Id bigint IDENTITY PRIMARY KEY,
  ClassSectionId bigint NOT NULL,
+ OriginalTeacherId bigint NOT NULL,
  RoomId bigint NULL,
  CameraId bigint NULL,
  VideoId bigint NULL,
@@ -241,6 +272,7 @@ CREATE TABLE Sessions(
  CreatedAt datetime2 NOT NULL DEFAULT SYSUTCDATETIME(),
  RowVersion rowversion,
  CONSTRAINT FK_Session_Class FOREIGN KEY(ClassSectionId) REFERENCES ClassSections(Id),
+ CONSTRAINT FK_Session_OriginalTeacher FOREIGN KEY(OriginalTeacherId) REFERENCES Teachers(Id),
  CONSTRAINT FK_Session_Room FOREIGN KEY(RoomId) REFERENCES Rooms(Id),
  CONSTRAINT FK_Session_Camera FOREIGN KEY(CameraId) REFERENCES Cameras(Id),
  CONSTRAINT FK_Session_Video FOREIGN KEY(VideoId) REFERENCES Videos(Id),
@@ -248,6 +280,27 @@ CREATE TABLE Sessions(
  CONSTRAINT CK_Session_Source CHECK((CameraId IS NOT NULL AND VideoId IS NULL) OR (CameraId IS NULL AND VideoId IS NOT NULL)),
  CONSTRAINT CK_Session_Status CHECK(Status IN('DRAFT','READY','STARTING','RUNNING','FINALIZING','FINALIZE_FAILED','COMPLETED','CANCELLED'))
 );
+CREATE TABLE SessionSubstitutions(
+ Id bigint IDENTITY PRIMARY KEY,
+ SessionId bigint NOT NULL,
+ OriginalTeacherId bigint NOT NULL,
+ SubstituteTeacherId bigint NOT NULL,
+ AssignedByUserId bigint NULL,
+ AssignedByTeacherId bigint NULL,
+ Reason nvarchar(512) NOT NULL,
+ Status nvarchar(32) NOT NULL DEFAULT 'ACTIVE',
+ AssignedAt datetime2 NOT NULL DEFAULT SYSUTCDATETIME(),
+ CancelledAt datetime2 NULL,
+ Note nvarchar(max) NULL,
+ CONSTRAINT FK_Sub_Session FOREIGN KEY(SessionId) REFERENCES Sessions(Id),
+ CONSTRAINT FK_Sub_OriginalTeacher FOREIGN KEY(OriginalTeacherId) REFERENCES Teachers(Id),
+ CONSTRAINT FK_Sub_SubstituteTeacher FOREIGN KEY(SubstituteTeacherId) REFERENCES Teachers(Id),
+ CONSTRAINT FK_Sub_AssignedByUser FOREIGN KEY(AssignedByUserId) REFERENCES Users(Id),
+ CONSTRAINT FK_Sub_AssignedByTeacher FOREIGN KEY(AssignedByTeacherId) REFERENCES Teachers(Id),
+ CONSTRAINT CK_Sub_Status CHECK(Status IN('ACTIVE','CANCELLED','COMPLETED')),
+ CONSTRAINT CK_Sub_DifferentTeacher CHECK(OriginalTeacherId <> SubstituteTeacherId)
+);
+CREATE UNIQUE INDEX UX_Sub_Active_Session ON SessionSubstitutions(SessionId) WHERE Status = 'ACTIVE';
 CREATE TABLE SessionStudents(
  SessionId bigint NOT NULL,
  StudentId bigint NOT NULL,
@@ -437,6 +490,7 @@ GO
 
 CREATE INDEX IX_Students_Class_Active ON Students(StudentClassId,IsActive,StudentCode);
 CREATE INDEX IX_ClassSections_Teacher ON ClassSections(TeacherId,IsActive,Semester);
+CREATE INDEX IX_Mgmt_Teacher_Active ON ManagementAssignments(TeacherId,IsActive,PositionType);
 CREATE INDEX IX_Enrollments_Student ON Enrollments(StudentId,ClassSectionId);
 CREATE INDEX IX_FaceEnrollments_Student_Status ON FaceEnrollments(StudentId,Status,StartedAt DESC);
 CREATE INDEX IX_FaceImages_Enrollment ON StudentFaceImages(FaceEnrollmentId,IsActive,CapturePose);
@@ -444,6 +498,8 @@ CREATE INDEX IX_FaceImages_Student_Hash ON StudentFaceImages(StudentId,Sha256,Is
 CREATE INDEX IX_FaceTemplates_Student_Active ON StudentFaceTemplates(StudentId,IsActive,CreatedAt DESC);
 CREATE INDEX IX_Videos_Hash ON Videos(Sha256,Status);
 CREATE INDEX IX_Sessions_Class_Time ON Sessions(ClassSectionId,ScheduledStart DESC);
+CREATE INDEX IX_Sessions_OriginalTeacher_Time ON Sessions(OriginalTeacherId,ScheduledStart DESC);
+CREATE INDEX IX_Substitute_Teacher_Status ON SessionSubstitutions(SubstituteTeacherId,Status,AssignedAt DESC);
 CREATE INDEX IX_Sessions_Camera_Time ON Sessions(CameraId,ScheduledStart,ScheduledEnd);
 CREATE INDEX IX_Stable_Session_State ON StableIdentities(SessionId,State,LastSeenAt DESC);
 CREATE INDEX IX_Stable_Session_Student ON StableIdentities(SessionId,StudentId,State);

@@ -52,6 +52,10 @@ export const routes: Routes = [
           ),
       },
       {
+        path: 'organization',
+        loadComponent: () => import('./features/organization.component').then((module) => module.OrganizationComponent),
+      },
+      {
         path: 'videos',
         loadComponent: () =>
           import('./features/videos.component').then(

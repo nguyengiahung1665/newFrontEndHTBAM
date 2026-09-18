@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, inject, signal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { HubConnection, HubConnectionBuilder } from '@microsoft/signalr';
-import { forkJoin } from 'rxjs';
+import { catchError, forkJoin, of } from 'rxjs';
 import { ApiService } from '../core/api.service';
 import { AuthService } from '../core/auth.service';
 import { ModalComponent, PageTitleComponent, errorText, fmtDate } from '../shared/ui';
@@ -15,11 +15,13 @@ import { ModalComponent, PageTitleComponent, errorText, fmtDate } from '../share
     <app-page-title [title]="session()?.classSection ? session().classSection + ' · Buổi #' + sessionId : 'Buổi học #' + sessionId" [subtitle]="sessionSubtitle()">
       <span class="badge" [class.blue]="realtimeState() === 'ONLINE'" [class.warning]="realtimeState() === 'CONNECTING'" [class.gray]="realtimeState() === 'OFFLINE'">{{ realtimeLabel() }}</span>
       <button type="button" class="secondary" (click)="load()">Cập nhật</button>
-      @if (session()?.status === 'READY' || session()?.status === 'DRAFT') { <button type="button" (click)="requestAction('start')">Bắt đầu</button> }
-      @if (session()?.status === 'RUNNING') { <button type="button" class="danger" (click)="requestAction('stop')">Kết thúc</button> }
+      @if (session()?.canOperate && (session()?.status === 'READY' || session()?.status === 'DRAFT')) { <button type="button" (click)="requestAction('start')">Bắt đầu</button> }
+      @if (session()?.canOperate && session()?.status === 'RUNNING') { <button type="button" class="danger" (click)="requestAction('stop')">Kết thúc</button> }
     </app-page-title>
 
     @if (error()) { <div class="error-box">{{ error() }}</div> }
+    @if (sessionError()) { <div class="error-box">Buổi học: {{ sessionError() }}</div> }
+    @if (dashboardError()) { <div class="error-box">Dashboard: {{ dashboardError() }}</div> }
     @if (message()) { <div class="success-box">{{ message() }}</div> }
     @if (loading()) { <div class="notice">Đang tải dữ liệu buổi học…</div> }
 
@@ -89,6 +91,8 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
   readonly session = signal<any>(null);
   readonly dashboard = signal<any>(null);
   readonly error = signal('');
+  readonly sessionError = signal('');
+  readonly dashboardError = signal('');
   readonly message = signal('');
   readonly loading = signal(false);
   readonly acting = signal(false);
@@ -111,9 +115,13 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
   load(): void {
     this.loading.set(true);
     this.error.set('');
-    forkJoin({ session: this.api.session(this.sessionId), dashboard: this.api.sessionDashboard(this.sessionId) }).subscribe({
+    this.sessionError.set('');
+    this.dashboardError.set('');
+    forkJoin({
+      session: this.api.session(this.sessionId).pipe(catchError((error) => { this.sessionError.set(errorText(error)); return of(null); })),
+      dashboard: this.api.sessionDashboard(this.sessionId).pipe(catchError((error) => { this.dashboardError.set(errorText(error)); return of(null); })),
+    }).subscribe({
       next: (result) => { this.session.set(result.session); this.dashboard.set(result.dashboard); this.loading.set(false); },
-      error: (error) => { this.error.set(errorText(error)); this.loading.set(false); },
     });
   }
   requestAction(action: 'start' | 'stop' | 'cancel' | 'retry-finalize'): void { this.pendingAction.set(action); }

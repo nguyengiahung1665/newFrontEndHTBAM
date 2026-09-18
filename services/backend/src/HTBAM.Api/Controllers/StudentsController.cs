@@ -20,7 +20,11 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
     [HttpGet]
     public async Task<ActionResult> List([FromQuery] string? q, [FromQuery] long? studentClassId, [FromQuery] bool includeInactive = false, [FromQuery] string? status = null, CancellationToken ct = default)
     {
-        var query = db.StudentsSet.AsNoTracking().Include(s => s.StudentClass).AsQueryable();
+        var teacherId = await AccessScope.TeacherIdAsync(db, User, ct);
+        var permittedSessions = AccessScope.Sessions(db, User, teacherId).Select(s => s.Id);
+        var permittedStudents = db.SessionStudentsSet.Where(x => permittedSessions.Contains(x.SessionId)).Select(x => x.StudentId)
+            .Concat(db.Enrollments.Where(x => db.ClassSections.Any(c => c.Id == x.ClassSectionId && c.TeacherId == teacherId)).Select(x => x.StudentId));
+        var query = db.StudentsSet.AsNoTracking().Include(s => s.StudentClass).Where(s => permittedStudents.Contains(s.Id));
         if (!string.IsNullOrWhiteSpace(status))
         {
             query = status.Trim().ToLowerInvariant() switch
@@ -48,15 +52,21 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
     [HttpGet("{id:long}")]
     public async Task<ActionResult> Get(long id, CancellationToken ct)
     {
+        var teacherId = await AccessScope.TeacherIdAsync(db, User, ct);
+        var permittedSessions = AccessScope.Sessions(db, User, teacherId).Select(s => s.Id);
+        var allowed = await db.SessionStudentsSet.AnyAsync(x => x.StudentId == id && permittedSessions.Contains(x.SessionId), ct)
+            || await db.Enrollments.AnyAsync(x => x.StudentId == id && db.ClassSections.Any(c => c.Id == x.ClassSectionId && c.TeacherId == teacherId), ct);
+        if (!allowed) return Forbid();
         var student = await db.StudentsSet.AsNoTracking().Include(x => x.StudentClass).FirstOrDefaultAsync(x => x.Id == id, ct);
         return student is null
             ? NotFound()
             : Ok(new { student.Id, student.StudentCode, student.FullName, student.Email, student.StudentClassId, StudentClass = student.StudentClass?.Code, student.AnonymousCode, student.IsActive, student.CreatedAt });
     }
 
-    [HttpPost, Authorize(Roles = "ADMIN")]
+    [HttpPost, Authorize(Roles = "LECTURER")]
     public async Task<ActionResult> Create(UpsertStudentRequest request, CancellationToken ct)
     {
+        if (request.StudentClassId is null || !await AccessScope.CanManageStudentClassAsync(db, User, request.StudentClassId.Value, ct)) return Forbid();
         var error = await Validate(request, null, ct);
         if (error is not null) return error;
         var student = new Student
@@ -70,11 +80,13 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
         return CreatedAtAction(nameof(Get), new { id = student.Id }, student);
     }
 
-    [HttpPut("{id:long}"), Authorize(Roles = "ADMIN")]
+    [HttpPut("{id:long}"), Authorize(Roles = "LECTURER")]
     public async Task<ActionResult> Update(long id, UpsertStudentRequest request, CancellationToken ct)
     {
         var student = await db.StudentsSet.FindAsync([id], ct);
         if (student is null) return NotFound();
+        if (!await AccessScope.CanManageStudentAsync(db, User, id, ct)) return Forbid();
+        if (request.StudentClassId is not null && !await AccessScope.CanManageStudentClassAsync(db, User, request.StudentClassId.Value, ct)) return Forbid();
         var error = await Validate(request, id, ct);
         if (error is not null) return error;
         student.StudentCode = request.StudentCode.Trim();
@@ -88,29 +100,31 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
         return NoContent();
     }
 
-    [HttpDelete("{id:long}"), Authorize(Roles = "ADMIN")]
+    [HttpDelete("{id:long}"), Authorize(Roles = "LECTURER")]
     public async Task<ActionResult> Deactivate(long id, CancellationToken ct)
     {
         var student = await db.StudentsSet.FindAsync([id], ct);
         if (student is null) return NotFound();
+        if (!await AccessScope.CanManageStudentAsync(db, User, id, ct)) return Forbid();
         student.IsActive = false;
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync(UserContext.Id(User), "STUDENT_DEACTIVATE", "Student", id.ToString(), new { student.StudentCode }, ct);
         return NoContent();
     }
 
-    [HttpPost("{id:long}/reactivate"), Authorize(Roles = "ADMIN")]
+    [HttpPost("{id:long}/reactivate"), Authorize(Roles = "LECTURER")]
     public async Task<ActionResult> Reactivate(long id, CancellationToken ct)
     {
         var student = await db.StudentsSet.FindAsync([id], ct);
         if (student is null) return NotFound();
+        if (!await AccessScope.CanManageStudentAsync(db, User, id, ct)) return Forbid();
         student.IsActive = true;
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync(UserContext.Id(User), "STUDENT_REACTIVATE", "Student", id.ToString(), new { student.StudentCode }, ct);
         return NoContent();
     }
 
-    [HttpPost("import-csv"), Authorize(Roles = "ADMIN"), RequestSizeLimit(10_000_000)]
+    [HttpPost("import-csv"), Authorize(Roles = "LECTURER"), RequestSizeLimit(10_000_000)]
     public async Task<ActionResult> ImportCsv(IFormFile file, CancellationToken ct)
     {
         if (file is null || file.Length == 0) return BadRequest(new { message = "Thiếu file CSV." });
@@ -197,6 +211,13 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
             var classCodes = candidates.Select(x => x.StudentClassCode).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var classes = await db.StudentClassesSet.AsNoTracking().Where(x => classCodes.Contains(x.Code) && x.IsActive).ToListAsync(ct);
         var classByCode = classes.ToDictionary(x => x.Code, StringComparer.OrdinalIgnoreCase);
+        foreach (var studentClass in classes)
+            if (!await AccessScope.CanManageStudentClassAsync(db, User, studentClass.Id, ct))
+            {
+                if (transaction is not null) await transaction.RollbackAsync(ct);
+                finalError = Forbid();
+                return;
+            }
         var studentCodes = candidates.Select(x => x.StudentCode).ToArray();
         var emails = candidates.Where(x => x.Email.Length > 0).Select(x => x.Email).ToArray();
         var anonymousCodes = candidates.Select(x => x.AnonymousCode).ToArray();

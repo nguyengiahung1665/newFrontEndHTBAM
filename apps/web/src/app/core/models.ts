@@ -13,7 +13,12 @@ export interface UserInfo {
   email: string;
   fullName: string;
   status: string;
+  teacherId?: number | null;
   roles: string[];
+  managementAssignments?: ManagementAssignment[];
+  facultyIds?: number[];
+  departmentIds?: number[];
+  permissions?: string[];
 }
 export interface Student { id:number; studentCode:string; fullName:string; email:string; studentClassId?:number|null; studentClass?:string|null; anonymousCode:string; isActive:boolean; createdAt?:string; }
 export interface CatalogBase { id:number; code:string; name:string; note?:string|null; isActive:boolean; }
@@ -26,7 +31,9 @@ export interface ClassSection extends CatalogBase { courseId:number; course?:str
 export interface Room extends CatalogBase { location?:string; capacity:number; }
 export interface Camera extends CatalogBase { roomId:number; room?:string; status:string; lastHealthCheckAt?:string|null; lastHealthMessage?:string|null; rtspUrl?:string; }
 export interface Video { id:number; fileName:string; contentType:string; sizeBytes:number; status:string; uploadedAt:string; uploadedByUserId?:number|null; }
-export interface Session { id:number; classSectionId:number; scheduledStart:string; scheduledEnd?:string|null; startedAt?:string|null; endedAt?:string|null; status:string; cameraId?:number|null; videoId?:number|null; attendancePolicyId:number; }
+export interface ManagementAssignment { id:number; teacherId?:number; positionType:string; facultyId?:number|null; departmentId?:number|null; effectiveFrom?:string; effectiveTo?:string|null; note?:string|null; isActive?:boolean; }
+export interface SessionSubstitution { id:number; sessionId:number; originalTeacherId:number; originalTeacherName?:string; substituteTeacherId:number; substituteTeacherName?:string; assignedByTeacherId?:number|null; reason:string; status:string; assignedAt:string; cancelledAt?:string|null; note?:string|null; }
+export interface Session { id:number; classSectionId:number; scheduledStart:string; scheduledEnd?:string|null; startedAt?:string|null; endedAt?:string|null; status:string; cameraId?:number|null; videoId?:number|null; attendancePolicyId:number; originalTeacherId?:number; originalTeacherName?:string|null; actualTeacherId?:number; actualTeacherName?:string|null; activeSubstitute?:SessionSubstitution|null; activeSubstitution?:SessionSubstitution|null; hasActiveSubstitution?:boolean; isSubstituteTeaching?:boolean; canOperate?:boolean; canManage?:boolean; }
 export interface AttendancePolicy { id:number; code:string; name:string; presentThreshold:number; partialThreshold:number; presentScore:number; partialScore:number; absentScore:number; version:string; isActive:boolean; }
 export interface Alert { id:number; sessionId:number; studentId?:number|null; type:string; status:string; confidence:number; observationQuality:number; startedAt:string; endedAt?:string|null; createdAt:string; lecturerNote?:string|null; }
 export interface AdminUser { id:number; userName:string; email:string; fullName:string; status:string; tokenVersion:number; lastLoginAt?:string|null; roles:string[]; }

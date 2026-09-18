@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostListener, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ApiService } from '../core/api.service';
 import { Alert } from '../core/models';
@@ -29,11 +29,11 @@ import { ModalComponent, PageTitleComponent, errorText, fmtDate } from '../share
               <td><span class="badge" [class.danger]="severity(alert) === 'Critical'" [class.warning]="severity(alert) === 'Warning'" [class.blue]="severity(alert) === 'Info'">{{ severity(alert) }}</span></td>
               <td class="cell-title">#{{ alert.sessionId }}</td><td>{{ alert.type }}</td><td>{{ percent(alert.confidence) }}</td><td>{{ percent(alert.observationQuality) }}</td><td>{{ date(alert.createdAt) }}</td>
               <td><span class="badge" [class.gray]="alert.status === 'CLOSED'" [class.blue]="alert.status === 'ACKNOWLEDGED'">{{ statusLabel(alert.status) }}</span></td>
-              <td><div class="inline-actions">
+              <td class="menu-cell"><button type="button" class="icon-button" aria-label="Thao tác" (click)="toggleMenu(alert.id,$event)">⋮</button>@if(openMenuId()===alert.id){<div class="action-menu">
                 @if (alert.status === 'OPEN') { <button type="button" class="small" (click)="openAction(alert, 'ack')">Xác nhận</button> }
                 @if (alert.status !== 'CLOSED') { <button type="button" class="secondary small" (click)="openAction(alert, 'close')">Đóng</button> }
                 @else { <button type="button" class="secondary small" (click)="openAction(alert, 'reopen')">Mở lại</button> }
-              </div></td>
+              </div>}</td>
             </tr>
           } @empty { <tr><td colspan="8" class="empty">Không có cảnh báo phù hợp.</td></tr> }
         </tbody>
@@ -57,11 +57,15 @@ export class AlertsComponent implements OnInit {
   readonly error = signal(''); readonly message = signal(''); readonly saving = signal(false);
   readonly selectedAlert = signal<Alert | null>(null);
   readonly selectedAction = signal<'ack' | 'close' | 'reopen'>('ack');
+  readonly openMenuId = signal<number | null>(null);
   sessionId: number | null = null; status = ''; note = ''; readonly date = fmtDate;
   ngOnInit(): void { this.load(); }
   load(): void { const params = new URLSearchParams(); if (this.sessionId) params.set('sessionId', String(this.sessionId)); if (this.status) params.set('status', this.status); this.api.alerts(params.toString()).subscribe({ next: (items) => this.items.set(items), error: (error) => this.error.set(errorText(error)) }); }
   clearFilters(): void { this.sessionId = null; this.status = ''; this.load(); }
-  openAction(alert: Alert, action: 'ack' | 'close' | 'reopen'): void { this.selectedAlert.set(alert); this.selectedAction.set(action); this.note = alert.lecturerNote ?? ''; }
+  @HostListener('document:click') closeMenu(): void { this.openMenuId.set(null); }
+  @HostListener('document:keydown.escape') closeMenuOnEscape(): void { this.openMenuId.set(null); }
+  toggleMenu(id: number, event: Event): void { event.stopPropagation(); this.openMenuId.update(current => current === id ? null : id); }
+  openAction(alert: Alert, action: 'ack' | 'close' | 'reopen'): void { this.openMenuId.set(null); this.selectedAlert.set(alert); this.selectedAction.set(action); this.note = alert.lecturerNote ?? ''; }
   closeAction(): void { if (!this.saving()) this.selectedAlert.set(null); }
   confirmAction(): void { const alert = this.selectedAlert(); if (!alert) return; this.saving.set(true); this.api.alertAction(alert.id, this.selectedAction(), this.note.trim()).subscribe({ next: () => { this.saving.set(false); this.selectedAlert.set(null); this.message.set('Đã cập nhật cảnh báo.'); this.load(); }, error: (error) => { this.error.set(errorText(error)); this.saving.set(false); } }); }
   percent(value: number): string { return `${Math.round(value * 100)}%`; }

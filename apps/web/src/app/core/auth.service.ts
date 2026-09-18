@@ -30,6 +30,22 @@ export class AuthService {
     () => this.user().roles?.includes('ADMIN') ?? false,
   );
 
+  readonly canAssignSubstitute = computed(
+    () => this.user().permissions?.includes('SUBSTITUTE_ASSIGN') ?? false,
+  );
+
+  readonly canManageStructure = computed(
+    () => (this.user().managementAssignments?.length ?? 0) > 0,
+  );
+
+  readonly canEditStudents = computed(
+    () => this.user().permissions?.includes('STUDENT_EDIT_SCOPE') ?? false,
+  );
+
+  readonly canCreateStudents = computed(
+    () => this.user().permissions?.includes('STUDENT_CREATE') ?? false,
+  );
+
   token(): string | null {
     return this.tokenState();
   }

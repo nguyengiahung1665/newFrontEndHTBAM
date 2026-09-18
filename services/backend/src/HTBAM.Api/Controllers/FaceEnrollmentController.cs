@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace HTBAM.Api.Controllers;
 
-[ApiController, Authorize(Roles = "ADMIN,TECH_AI"), Route("api/students/{studentId:long}/face-enrollments")]
+[ApiController, Authorize(Roles = "LECTURER,TECH_AI"), Route("api/students/{studentId:long}/face-enrollments")]
 public sealed class FaceEnrollmentController(
     AppDbContext db,
     IFaceEnrollmentService enrollments,
@@ -20,6 +20,7 @@ public sealed class FaceEnrollmentController(
     [HttpGet]
     public async Task<ActionResult> List(long studentId, CancellationToken ct)
     {
+        if (!await CanAccessStudent(studentId, ct)) return Forbid();
         if (!await db.StudentsSet.AnyAsync(x => x.Id == studentId, ct)) return NotFound();
         var list = await db.FaceEnrollmentsSet.AsNoTracking().Where(x => x.StudentId == studentId).OrderByDescending(x => x.StartedAt)
             .Select(x => new
@@ -34,6 +35,7 @@ public sealed class FaceEnrollmentController(
     [HttpGet("{enrollmentId:long}")]
     public async Task<ActionResult> Detail(long studentId, long enrollmentId, CancellationToken ct)
     {
+        if (!await CanAccessStudent(studentId, ct)) return Forbid();
         var enrollment = await db.FaceEnrollmentsSet.AsNoTracking().FirstOrDefaultAsync(x => x.Id == enrollmentId && x.StudentId == studentId, ct);
         if (enrollment is null) return NotFound();
         var images = await db.StudentFaceImagesSet.AsNoTracking().Where(x => x.FaceEnrollmentId == enrollmentId && x.IsActive)
@@ -46,6 +48,7 @@ public sealed class FaceEnrollmentController(
     [HttpGet("status")]
     public async Task<ActionResult> Status(long studentId, CancellationToken ct)
     {
+        if (!await CanAccessStudent(studentId, ct)) return Forbid();
         if (!await db.StudentsSet.AnyAsync(x => x.Id == studentId, ct)) return NotFound();
         var latest = await db.FaceEnrollmentsSet.AsNoTracking().Where(x => x.StudentId == studentId).OrderByDescending(x => x.StartedAt).FirstOrDefaultAsync(ct);
         var ready = await db.StudentFaceTemplatesSet.AsNoTracking().AnyAsync(x => x.StudentId == studentId && x.IsActive && x.QualityStatus == "PASS", ct);
@@ -55,6 +58,7 @@ public sealed class FaceEnrollmentController(
     [HttpPost]
     public async Task<ActionResult> Start(long studentId, CancellationToken ct)
     {
+        if (!await CanAccessStudent(studentId, ct)) return Forbid();
         var x = await enrollments.StartAsync(studentId, ct);
         await audit.WriteAsync(UserContext.Id(User), "FACE_ENROLLMENT_START", "FaceEnrollment", x.Id.ToString(), new { studentId }, ct);
         return CreatedAtAction(nameof(Detail), new { studentId, enrollmentId = x.Id }, new { x.Id, x.StudentId, x.Status, x.RequiredPoses, x.MinAcceptedImages });
@@ -65,6 +69,7 @@ public sealed class FaceEnrollmentController(
     [RequestSizeLimit(8 * 1024 * 1024)]
     public async Task<ActionResult> UploadImage(long studentId, long enrollmentId, IFormFile file, [FromForm] string capturePose, [FromForm] string sourceType = "UPLOAD", CancellationToken ct = default)
     {
+        if (!await CanAccessStudent(studentId, ct)) return Forbid();
         if (file is null || file.Length == 0) return BadRequest("Thiếu file ảnh.");
         await using var stream = file.OpenReadStream();
         var image = await enrollments.UploadImageAsync(studentId, enrollmentId, file.FileName, file.ContentType, file.Length, capturePose, sourceType, stream, ct);
@@ -75,6 +80,7 @@ public sealed class FaceEnrollmentController(
     [HttpGet("{enrollmentId:long}/images/{imageId:long}/preview-url")]
     public async Task<ActionResult> Preview(long studentId, long enrollmentId, long imageId, CancellationToken ct)
     {
+        if (!await CanAccessStudent(studentId, ct)) return Forbid();
         var image = await db.StudentFaceImagesSet.AsNoTracking().FirstOrDefaultAsync(x => x.Id == imageId && x.FaceEnrollmentId == enrollmentId && x.StudentId == studentId && x.IsActive, ct);
         if (image is null) return NotFound();
         var url = await storage.GetReadUrlAsync(image.ObjectKey, 300, ct);
@@ -84,6 +90,7 @@ public sealed class FaceEnrollmentController(
     [HttpDelete("{enrollmentId:long}/images/{imageId:long}")]
     public async Task<ActionResult> DeleteImage(long studentId, long enrollmentId, long imageId, CancellationToken ct)
     {
+        if (!await CanAccessStudent(studentId, ct)) return Forbid();
         await enrollments.DeleteImageAsync(studentId, enrollmentId, imageId, ct);
         await audit.WriteAsync(UserContext.Id(User), "FACE_IMAGE_DELETE", "StudentFaceImage", imageId.ToString(), new { studentId, enrollmentId }, ct);
         return NoContent();
@@ -92,6 +99,7 @@ public sealed class FaceEnrollmentController(
     [HttpPost("{enrollmentId:long}/submit")]
     public async Task<ActionResult> Submit(long studentId, long enrollmentId, CancellationToken ct)
     {
+        if (!await CanAccessStudent(studentId, ct)) return Forbid();
         var x = await enrollments.SubmitAsync(studentId, enrollmentId, ct);
         await audit.WriteAsync(UserContext.Id(User), "FACE_ENROLLMENT_SUBMIT", "FaceEnrollment", x.Id.ToString(), new { studentId, x.Status }, ct);
         return Ok(new { x.Id, x.Status, message = "Ảnh đã lưu an toàn. Chờ AI quality/ArcFace; không tạo embedding giả." });
@@ -100,6 +108,7 @@ public sealed class FaceEnrollmentController(
     [HttpPost("{enrollmentId:long}/process")]
     public async Task<ActionResult> Process(long studentId, long enrollmentId, CancellationToken ct)
     {
+        if (!await CanAccessStudent(studentId, ct)) return Forbid();
         var capabilities = await ai.CapabilitiesAsync(ct);
         if (!capabilities.FaceEnrollment)
             return Conflict(new { code = "FACE_MODEL_NOT_READY", message = "AI Face Enrollment chưa sẵn sàng; dữ liệu vẫn giữ PENDING_AI.", loadedModels = capabilities.LoadedModels });
@@ -117,8 +126,12 @@ public sealed class FaceEnrollmentController(
     [HttpPost("{enrollmentId:long}/cancel")]
     public async Task<ActionResult> Cancel(long studentId, long enrollmentId, CancellationToken ct)
     {
+        if (!await CanAccessStudent(studentId, ct)) return Forbid();
         await enrollments.CancelAsync(studentId, enrollmentId, ct);
         await audit.WriteAsync(UserContext.Id(User), "FACE_ENROLLMENT_CANCEL", "FaceEnrollment", enrollmentId.ToString(), new { studentId }, ct);
         return NoContent();
     }
+
+    private Task<bool> CanAccessStudent(long studentId, CancellationToken ct) =>
+        User.IsInRole("TECH_AI") ? Task.FromResult(true) : AccessScope.CanManageStudentAsync(db, User, studentId, ct);
 }
