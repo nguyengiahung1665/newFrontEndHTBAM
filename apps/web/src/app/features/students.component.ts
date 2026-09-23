@@ -26,6 +26,8 @@ import {
 import {
   ModalComponent,
   PageTitleComponent,
+  RowActionMenuComponent,
+  apiFieldErrors,
   errorText,
 } from '../shared/ui';
 
@@ -37,13 +39,14 @@ import {
     RouterLink,
     ModalComponent,
     PageTitleComponent,
+    RowActionMenuComponent,
   ],
   template: `
     <app-page-title
       title="Hồ sơ sinh viên"
       subtitle="Quản lý thông tin, lớp sinh hoạt và dữ liệu nhận diện sinh viên."
     >
-      @if (auth.isAdmin()) {
+      @if (auth.canCreateStudents()) {
         <button
           type="button"
           (click)="openCreateStudent()"
@@ -133,7 +136,7 @@ import {
           </button>
         </div>
 
-        @if (auth.isAdmin()) {
+        @if (auth.canCreateStudents()) {
           <div class="student-import-actions">
             <button type="button" class="secondary" (click)="openImportModal()">Import CSV</button>
 
@@ -200,20 +203,22 @@ import {
                     }}
                   </span>
                 </td>
-                <td>
-                  <div class="inline-actions">
-                    <a
-                      class="button-link"
-                      [routerLink]="[
-                        '/students',
-                        student.id,
-                        'face-enrollment'
-                      ]"
-                    >
-                      Khuôn mặt
-                    </a>
+                <td class="menu-cell">
+                  <app-row-action-menu>
+                    @if (auth.canEnrollFaces() && (student.canManage || auth.user().roles?.includes('TECH_AI'))) {
+                      <a
+                        class="button-link"
+                        [routerLink]="[
+                          '/students',
+                          student.id,
+                          'face-enrollment'
+                        ]"
+                      >
+                        Khuôn mặt
+                      </a>
+                    }
 
-                    @if (auth.isAdmin()) {
+                    @if (auth.canEditStudents() && student.canManage) {
                       <button
                         type="button"
                         class="secondary small"
@@ -236,7 +241,7 @@ import {
                             )
                           "
                         >
-                          Ngừng
+                          Ngừng hoạt động
                         </button>
                       } @else {
                         <button
@@ -248,11 +253,11 @@ import {
                             )
                           "
                         >
-                          Kích hoạt
+                          Kích hoạt lại
                         </button>
                       }
                     }
-                  </div>
+                  </app-row-action-menu>
                 </td>
               </tr>
             } @empty {
@@ -286,10 +291,14 @@ import {
           [formGroup]="form"
           (ngSubmit)="saveStudent()"
         >
+          @if (studentFormError()) {
+            <div class="error-box span2">{{ studentFormError() }}</div>
+          }
           <label>
             MSSV *
             <input
               formControlName="studentCode"
+              (input)="clearStudentFieldError('studentCode')"
             />
 
             @if (
@@ -301,6 +310,9 @@ import {
               <small class="field-error">
                 Mã sinh viên là bắt buộc.
               </small>
+            }
+            @if (studentFieldErrors()['studentCode']) {
+              <small class="field-error">{{ studentFieldErrors()['studentCode'] }}</small>
             }
           </label>
 
@@ -327,7 +339,11 @@ import {
             <input
               type="email"
               formControlName="email"
+              (input)="clearStudentFieldError('email')"
             />
+            @if (studentFieldErrors()['email']) {
+              <small class="field-error">{{ studentFieldErrors()['email'] }}</small>
+            }
           </label>
 
           <label>
@@ -358,6 +374,7 @@ import {
             Mã ẩn danh *
             <input
               formControlName="anonymousCode"
+              (input)="clearStudentFieldError('anonymousCode')"
             />
 
             @if (
@@ -370,6 +387,9 @@ import {
                 Mã ẩn danh là bắt buộc.
               </small>
             }
+            @if (studentFieldErrors()['anonymousCode']) {
+              <small class="field-error">{{ studentFieldErrors()['anonymousCode'] }}</small>
+            }
           </label>
 
           <label class="check">
@@ -380,7 +400,7 @@ import {
             Hoạt động
           </label>
 
-          <div class="form-actions">
+          <div class="modal-footer span2" style="margin:0 -20px -20px">
             <button
               type="submit"
               [disabled]="
@@ -465,7 +485,7 @@ import {
           không?
         </p>
 
-        <div class="form-actions">
+        <div class="modal-footer" style="margin:20px -20px -20px">
           <button
             type="button"
             class="danger"
@@ -517,6 +537,8 @@ export class StudentsComponent
   readonly importModalOpen = signal(false);
   readonly selectedImportFile = signal<File | null>(null);
   readonly error = signal('');
+  readonly studentFormError = signal('');
+  readonly studentFieldErrors = signal<Record<string, string>>({});
   readonly message = signal('');
 
   readonly importErrors =
@@ -614,6 +636,9 @@ export class StudentsComponent
   }
 
   openCreateStudent(): void {
+    this.studentFormError.set('');
+    this.studentFieldErrors.set({});
+    this.form.controls.studentClassId.enable({ emitEvent: false });
     this.editingStudentId.set(null);
 
     this.form.reset({
@@ -633,6 +658,13 @@ export class StudentsComponent
   openEditStudent(
     student: Student,
   ): void {
+    this.studentFormError.set('');
+    this.studentFieldErrors.set({});
+    if (this.auth.canCreateStudents()) {
+      this.form.controls.studentClassId.enable({ emitEvent: false });
+    } else {
+      this.form.controls.studentClassId.disable({ emitEvent: false });
+    }
     this.editingStudentId.set(
       student.id,
     );
@@ -671,6 +703,15 @@ export class StudentsComponent
     }
   }
 
+  clearStudentFieldError(field: string): void {
+    this.studentFieldErrors.update((errors) => {
+      if (!errors[field]) return errors;
+      const next = { ...errors };
+      delete next[field];
+      return next;
+    });
+  }
+
   saveStudent(): void {
     if (
       this.form.invalid ||
@@ -681,7 +722,8 @@ export class StudentsComponent
     }
 
     this.saving.set(true);
-    this.error.set('');
+    this.studentFormError.set('');
+    this.studentFieldErrors.set({});
     this.message.set('');
 
     const raw =
@@ -729,7 +771,8 @@ export class StudentsComponent
         },
 
         error: (error) => {
-          this.error.set(
+          this.studentFieldErrors.set(apiFieldErrors(error));
+          this.studentFormError.set(
             errorText(error),
           );
 

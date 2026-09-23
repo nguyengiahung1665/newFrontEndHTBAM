@@ -17,4 +17,28 @@ INSERT Enrollments(ClassSectionId,StudentId) SELECT @ClassSectionId,Id FROM Stud
 IF NOT EXISTS(SELECT 1 FROM Rooms WHERE Code='A101') INSERT Rooms(Code,Name,Location,Capacity,IsActive) VALUES('A101',N'Phòng A101',N'Cơ sở demo',50,1);
 DECLARE @RoomId bigint=(SELECT TOP 1 Id FROM Rooms WHERE Code='A101');
 IF NOT EXISTS(SELECT 1 FROM Cameras WHERE Code='CAM-A101') INSERT Cameras(Code,Name,RoomId,RtspUrl,Status,IsActive) VALUES('CAM-A101',N'Camera phòng A101',@RoomId,'rtsp://127.0.0.1:8554/classroom','OFFLINE',1);
+IF NOT EXISTS(SELECT 1 FROM Departments WHERE Code='KHMT') INSERT Departments(Code,Name,FacultyId,IsActive) VALUES('KHMT',N'Bộ môn Khoa học máy tính',@FacultyId,1);
+DECLARE @Dept2Id bigint=(SELECT TOP 1 Id FROM Departments WHERE Code='KHMT');
+IF NOT EXISTS(SELECT 1 FROM Users WHERE UserName='dean') INSERT Users(UserName,Email,PasswordHash,FullName,Status) VALUES('dean','dean@example.local','DEV-SAMPLE-NOT-A-LOGIN-HASH',N'Trưởng khoa Demo','ACTIVE');
+IF NOT EXISTS(SELECT 1 FROM Users WHERE UserName='depthead') INSERT Users(UserName,Email,PasswordHash,FullName,Status) VALUES('depthead','depthead@example.local','DEV-SAMPLE-NOT-A-LOGIN-HASH',N'Trưởng bộ môn Demo','ACTIVE');
+IF NOT EXISTS(SELECT 1 FROM Users WHERE UserName='lecturer2') INSERT Users(UserName,Email,PasswordHash,FullName,Status) VALUES('lecturer2','lecturer2@example.local','DEV-SAMPLE-NOT-A-LOGIN-HASH',N'Giảng viên dạy thay','ACTIVE');
+DECLARE @LecturerRole bigint=(SELECT TOP 1 Id FROM Roles WHERE Name='LECTURER');
+INSERT UserRoles(UserId,RoleId) SELECT u.Id,@LecturerRole FROM Users u WHERE u.UserName IN('dean','depthead','lecturer2') AND @LecturerRole IS NOT NULL AND NOT EXISTS(SELECT 1 FROM UserRoles ur WHERE ur.UserId=u.Id AND ur.RoleId=@LecturerRole);
+IF NOT EXISTS(SELECT 1 FROM Teachers WHERE TeacherCode='GV-DEAN') INSERT Teachers(TeacherCode,FullName,Email,UserId,DepartmentId,IsActive) SELECT 'GV-DEAN',N'Trưởng khoa Demo','dean@example.local',Id,@DeptId,1 FROM Users WHERE UserName='dean';
+IF NOT EXISTS(SELECT 1 FROM Teachers WHERE TeacherCode='GV-HEAD') INSERT Teachers(TeacherCode,FullName,Email,UserId,DepartmentId,IsActive) SELECT 'GV-HEAD',N'Trưởng bộ môn Demo','depthead@example.local',Id,@DeptId,1 FROM Users WHERE UserName='depthead';
+IF NOT EXISTS(SELECT 1 FROM Teachers WHERE TeacherCode='GV002') INSERT Teachers(TeacherCode,FullName,Email,UserId,DepartmentId,IsActive) SELECT 'GV002',N'Giảng viên dạy thay','lecturer2@example.local',Id,@DeptId,1 FROM Users WHERE UserName='lecturer2';
+DECLARE @DeanTeacherId bigint=(SELECT TOP 1 Id FROM Teachers WHERE TeacherCode='GV-DEAN');
+DECLARE @HeadTeacherId bigint=(SELECT TOP 1 Id FROM Teachers WHERE TeacherCode='GV-HEAD');
+DECLARE @SubTeacherId bigint=(SELECT TOP 1 Id FROM Teachers WHERE TeacherCode='GV002');
+IF NOT EXISTS(SELECT 1 FROM ManagementAssignments WHERE PositionType='FACULTY_HEAD' AND FacultyId=@FacultyId AND IsActive=1) INSERT ManagementAssignments(TeacherId,PositionType,FacultyId,IsActive,Note) VALUES(@DeanTeacherId,'FACULTY_HEAD',@FacultyId,1,N'Dữ liệu mẫu trưởng khoa');
+IF NOT EXISTS(SELECT 1 FROM ManagementAssignments WHERE PositionType='DEPARTMENT_HEAD' AND DepartmentId=@DeptId AND IsActive=1) INSERT ManagementAssignments(TeacherId,PositionType,DepartmentId,IsActive,Note) VALUES(@HeadTeacherId,'DEPARTMENT_HEAD',@DeptId,1,N'Dữ liệu mẫu trưởng bộ môn');
+IF NOT EXISTS(SELECT 1 FROM Courses WHERE Code='HTBAM-KHMT') INSERT Courses(Code,Name,DepartmentId,Credits,IsActive) VALUES('HTBAM-KHMT',N'Phân tích hành vi - KHMT',@Dept2Id,3,1);
+DECLARE @Course2Id bigint=(SELECT TOP 1 Id FROM Courses WHERE Code='HTBAM-KHMT');
+IF NOT EXISTS(SELECT 1 FROM ClassSections WHERE Code='HTBAM-DEMO-02') INSERT ClassSections(Code,Name,CourseId,TeacherId,Semester,AcademicYear,IsActive) VALUES('HTBAM-DEMO-02',N'HTBAM Demo 02',@Course2Id,@SubTeacherId,'HK1','2026-2027',1);
+DECLARE @ClassSection2Id bigint=(SELECT TOP 1 Id FROM ClassSections WHERE Code='HTBAM-DEMO-02');
+IF NOT EXISTS(SELECT 1 FROM Sessions WHERE ClassSectionId=@ClassSection2Id AND ScheduledStart='2026-10-02T08:00:00') INSERT Sessions(ClassSectionId,OriginalTeacherId,RoomId,CameraId,AttendancePolicyId,ScheduledStart,ScheduledEnd,Status,AlertProfile) VALUES(@ClassSection2Id,@SubTeacherId,@RoomId,(SELECT TOP 1 Id FROM Cameras WHERE Code='CAM-A101'),(SELECT TOP 1 Id FROM AttendancePolicies WHERE Code='DEFAULT'),'2026-10-02T08:00:00','2026-10-02T10:00:00','READY','DEFAULT');
+IF NOT EXISTS(SELECT 1 FROM Sessions WHERE ClassSectionId=@ClassSectionId AND ScheduledStart='2026-10-01T08:00:00') INSERT Sessions(ClassSectionId,OriginalTeacherId,RoomId,CameraId,AttendancePolicyId,ScheduledStart,ScheduledEnd,Status,AlertProfile) VALUES(@ClassSectionId,@TeacherId,@RoomId,(SELECT TOP 1 Id FROM Cameras WHERE Code='CAM-A101'),(SELECT TOP 1 Id FROM AttendancePolicies WHERE Code='DEFAULT'),'2026-10-01T08:00:00','2026-10-01T10:00:00','READY','DEFAULT');
+DECLARE @SubSessionId bigint=(SELECT TOP 1 Id FROM Sessions WHERE ClassSectionId=@ClassSectionId AND ScheduledStart='2026-10-01T08:00:00');
+INSERT SessionStudents(SessionId,StudentId) SELECT @SubSessionId,Id FROM Students s WHERE s.StudentCode IN('SV001','SV002') AND NOT EXISTS(SELECT 1 FROM SessionStudents ss WHERE ss.SessionId=@SubSessionId AND ss.StudentId=s.Id);
+IF NOT EXISTS(SELECT 1 FROM SessionSubstitutions WHERE SessionId=@SubSessionId AND Status='ACTIVE') INSERT SessionSubstitutions(SessionId,OriginalTeacherId,SubstituteTeacherId,AssignedByTeacherId,Reason,Status,Note) VALUES(@SubSessionId,@TeacherId,@SubTeacherId,@HeadTeacherId,N'Dữ liệu mẫu dạy thay','ACTIVE',N'Dữ liệu mẫu');
 GO

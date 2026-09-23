@@ -20,7 +20,29 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
     [HttpGet]
     public async Task<ActionResult> List([FromQuery] string? q, [FromQuery] long? studentClassId, [FromQuery] bool includeInactive = false, [FromQuery] string? status = null, CancellationToken ct = default)
     {
-        var query = db.StudentsSet.AsNoTracking().Include(s => s.StudentClass).AsQueryable();
+        var teacherId = await AccessScope.TeacherIdAsync(db, User, ct);
+        var permittedSessions = AccessScope.Sessions(db, User, teacherId).Select(s => s.Id);
+        var permittedStudents = db.SessionStudentsSet.Where(x => permittedSessions.Contains(x.SessionId)).Select(x => x.StudentId)
+            .Concat(db.Enrollments.Where(x => db.ClassSections.Any(c => c.Id == x.ClassSectionId && c.TeacherId == teacherId)).Select(x => x.StudentId));
+        var managedFacultyIds = db.ManagementAssignmentsSet.Where(a =>
+            a.TeacherId == teacherId && a.IsActive && a.PositionType == "FACULTY_HEAD" && a.FacultyId != null)
+            .Select(a => a.FacultyId!.Value);
+        var managedFacultyStudents = db.StudentsSet.Where(student =>
+            student.StudentClassId != null &&
+            db.StudentClassesSet.Any(studentClass =>
+                studentClass.Id == student.StudentClassId && managedFacultyIds.Contains(studentClass.FacultyId)))
+            .Select(student => student.Id);
+        var manageableStudents = db.Enrollments.Where(x =>
+            x.ClassSection.TeacherId == teacherId ||
+            db.ManagementAssignmentsSet.Any(a =>
+                a.TeacherId == teacherId &&
+                a.IsActive &&
+                ((a.PositionType == "DEPARTMENT_HEAD" && a.DepartmentId == x.ClassSection.Course.DepartmentId) ||
+                 (a.PositionType == "FACULTY_HEAD" && a.FacultyId != null && db.DepartmentsSet.Any(d => d.Id == x.ClassSection.Course.DepartmentId && d.FacultyId == a.FacultyId)))))
+            .Select(x => x.StudentId)
+            .Concat(managedFacultyStudents);
+        var visibleStudents = permittedStudents.Concat(managedFacultyStudents);
+        var query = db.StudentsSet.AsNoTracking().Include(s => s.StudentClass).Where(s => visibleStudents.Contains(s.Id));
         if (!string.IsNullOrWhiteSpace(status))
         {
             query = status.Trim().ToLowerInvariant() switch
@@ -41,22 +63,25 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
         {
             s.Id, s.StudentCode, s.FullName, s.Email, s.StudentClassId,
             StudentClass = s.StudentClass != null ? s.StudentClass.Code : null,
-            s.AnonymousCode, s.IsActive, s.CreatedAt
+            s.AnonymousCode, s.IsActive, s.CreatedAt,
+            CanManage = manageableStudents.Contains(s.Id)
         }).ToListAsync(ct));
     }
 
     [HttpGet("{id:long}")]
     public async Task<ActionResult> Get(long id, CancellationToken ct)
     {
+        if (!await AccessScope.CanViewStudentAsync(db, User, id, ct)) return Forbid();
         var student = await db.StudentsSet.AsNoTracking().Include(x => x.StudentClass).FirstOrDefaultAsync(x => x.Id == id, ct);
         return student is null
             ? NotFound()
             : Ok(new { student.Id, student.StudentCode, student.FullName, student.Email, student.StudentClassId, StudentClass = student.StudentClass?.Code, student.AnonymousCode, student.IsActive, student.CreatedAt });
     }
 
-    [HttpPost, Authorize(Roles = "ADMIN")]
+    [HttpPost, Authorize(Roles = "LECTURER")]
     public async Task<ActionResult> Create(UpsertStudentRequest request, CancellationToken ct)
     {
+        if (request.StudentClassId is null || !await AccessScope.CanManageStudentClassAsync(db, User, request.StudentClassId.Value, ct)) return Forbid();
         var error = await Validate(request, null, ct);
         if (error is not null) return error;
         var student = new Student
@@ -70,11 +95,13 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
         return CreatedAtAction(nameof(Get), new { id = student.Id }, student);
     }
 
-    [HttpPut("{id:long}"), Authorize(Roles = "ADMIN")]
+    [HttpPut("{id:long}"), Authorize(Roles = "LECTURER")]
     public async Task<ActionResult> Update(long id, UpsertStudentRequest request, CancellationToken ct)
     {
         var student = await db.StudentsSet.FindAsync([id], ct);
         if (student is null) return NotFound();
+        if (!await AccessScope.CanManageStudentAsync(db, User, id, ct)) return Forbid();
+        if (request.StudentClassId != student.StudentClassId && request.StudentClassId is not null && !await AccessScope.CanManageStudentClassAsync(db, User, request.StudentClassId.Value, ct)) return Forbid();
         var error = await Validate(request, id, ct);
         if (error is not null) return error;
         student.StudentCode = request.StudentCode.Trim();
@@ -88,29 +115,31 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
         return NoContent();
     }
 
-    [HttpDelete("{id:long}"), Authorize(Roles = "ADMIN")]
+    [HttpDelete("{id:long}"), Authorize(Roles = "LECTURER")]
     public async Task<ActionResult> Deactivate(long id, CancellationToken ct)
     {
         var student = await db.StudentsSet.FindAsync([id], ct);
         if (student is null) return NotFound();
+        if (!await AccessScope.CanManageStudentAsync(db, User, id, ct)) return Forbid();
         student.IsActive = false;
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync(UserContext.Id(User), "STUDENT_DEACTIVATE", "Student", id.ToString(), new { student.StudentCode }, ct);
         return NoContent();
     }
 
-    [HttpPost("{id:long}/reactivate"), Authorize(Roles = "ADMIN")]
+    [HttpPost("{id:long}/reactivate"), Authorize(Roles = "LECTURER")]
     public async Task<ActionResult> Reactivate(long id, CancellationToken ct)
     {
         var student = await db.StudentsSet.FindAsync([id], ct);
         if (student is null) return NotFound();
+        if (!await AccessScope.CanManageStudentAsync(db, User, id, ct)) return Forbid();
         student.IsActive = true;
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync(UserContext.Id(User), "STUDENT_REACTIVATE", "Student", id.ToString(), new { student.StudentCode }, ct);
         return NoContent();
     }
 
-    [HttpPost("import-csv"), Authorize(Roles = "ADMIN"), RequestSizeLimit(10_000_000)]
+    [HttpPost("import-csv"), Authorize(Roles = "LECTURER"), RequestSizeLimit(10_000_000)]
     public async Task<ActionResult> ImportCsv(IFormFile file, CancellationToken ct)
     {
         if (file is null || file.Length == 0) return BadRequest(new { message = "Thiếu file CSV." });
@@ -197,10 +226,20 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
             var classCodes = candidates.Select(x => x.StudentClassCode).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var classes = await db.StudentClassesSet.AsNoTracking().Where(x => classCodes.Contains(x.Code) && x.IsActive).ToListAsync(ct);
         var classByCode = classes.ToDictionary(x => x.Code, StringComparer.OrdinalIgnoreCase);
-        var studentCodes = candidates.Select(x => x.StudentCode).ToArray();
-        var emails = candidates.Where(x => x.Email.Length > 0).Select(x => x.Email).ToArray();
-        var anonymousCodes = candidates.Select(x => x.AnonymousCode).ToArray();
-        var existing = await db.StudentsSet.AsNoTracking().Where(x => studentCodes.Contains(x.StudentCode) || anonymousCodes.Contains(x.AnonymousCode) || (x.Email != "" && emails.Contains(x.Email))).ToListAsync(ct);
+        foreach (var studentClass in classes)
+            if (!await AccessScope.CanManageStudentClassAsync(db, User, studentClass.Id, ct))
+            {
+                if (transaction is not null) await transaction.RollbackAsync(ct);
+                finalError = Forbid();
+                return;
+            }
+        var studentCodes = candidates.Select(x => ApiValidation.Key(x.StudentCode)).ToArray();
+        var emails = candidates.Where(x => x.Email.Length > 0).Select(x => ApiValidation.Key(x.Email)).ToArray();
+        var anonymousCodes = candidates.Select(x => ApiValidation.Key(x.AnonymousCode)).ToArray();
+        var existing = await db.StudentsSet.AsNoTracking().Where(x =>
+            studentCodes.Contains(x.StudentCode.ToUpper()) ||
+            anonymousCodes.Contains(x.AnonymousCode.ToUpper()) ||
+            (x.Email != "" && emails.Contains(x.Email.ToUpper()))).ToListAsync(ct);
         var existingCodes = existing.Select(x => x.StudentCode).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var existingEmails = existing.Where(x => x.Email.Length > 0).Select(x => x.Email).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var existingAnonymousCodes = existing.Select(x => x.AnonymousCode).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -263,7 +302,39 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
         if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(request.FullName) || string.IsNullOrWhiteSpace(anonymousCode)) return BadRequest("Thiếu MSSV/họ tên/mã ẩn danh.");
         if (email.Length > 0 && !MailAddress.TryCreate(email, out _)) return BadRequest("Email không hợp lệ.");
         if (request.StudentClassId is not null && !await db.StudentClassesSet.AnyAsync(x => x.Id == request.StudentClassId && x.IsActive, ct)) return BadRequest("Lớp sinh hoạt không hợp lệ.");
-        if (await db.StudentsSet.AnyAsync(x => x.Id != id && (x.StudentCode == code || x.AnonymousCode == anonymousCode || (email != "" && x.Email == email)), ct)) return Conflict("Trùng MSSV/email/mã ẩn danh.");
+
+        var codeKey = ApiValidation.Key(code);
+        var anonymousCodeKey = ApiValidation.Key(anonymousCode);
+        var emailKey = ApiValidation.Key(email);
+        var conflicts = new List<ApiFieldError>();
+
+        if (await db.StudentsSet.AsNoTracking().AnyAsync(
+                x => x.Id != id && x.StudentCode.ToUpper() == codeKey,
+                ct))
+            conflicts.Add(new ApiFieldError("studentCode", $"MSSV {code} đã tồn tại."));
+
+        if (email.Length > 0 && await db.StudentsSet.AsNoTracking().AnyAsync(
+                x => x.Id != id && x.Email != "" && x.Email.ToUpper() == emailKey,
+                ct))
+            conflicts.Add(new ApiFieldError("email", $"Email {email} đã được sử dụng."));
+
+        if (await db.StudentsSet.AsNoTracking().AnyAsync(
+                x => x.Id != id && x.AnonymousCode.ToUpper() == anonymousCodeKey,
+                ct))
+            conflicts.Add(new ApiFieldError("anonymousCode", $"Mã ẩn danh '{anonymousCode}' đã tồn tại."));
+
+        if (conflicts.Count > 1) return Conflict(ApiValidation.DuplicateFields(conflicts));
+        if (conflicts.Count == 1)
+        {
+            var conflict = conflicts[0];
+            var errorCode = conflict.Field switch
+            {
+                "studentCode" => "STUDENT_CODE_DUPLICATE",
+                "email" => "STUDENT_EMAIL_DUPLICATE",
+                _ => "STUDENT_ANONYMOUS_CODE_DUPLICATE"
+            };
+            return Conflict(ApiValidation.Duplicate(errorCode, conflict.Field, conflict.Message));
+        }
         return null;
     }
 

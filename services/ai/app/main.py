@@ -9,7 +9,7 @@ async def health():
 
 @app.get("/capabilities", response_model=CapabilitiesResponse)
 async def capabilities():
-    return CapabilitiesResponse(sessionInference=False, faceEnrollment=False, loadedModels=[])
+    return CapabilitiesResponse(sessionInference=False, faceEnrollment=False, annotatedVideoOutput=False, loadedModels=[])
 
 @app.post("/jobs/start", response_model=StartJobResponse)
 async def start_job(req: StartJobRequest):

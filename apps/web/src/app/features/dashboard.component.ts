@@ -1,9 +1,9 @@
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
-import { forkJoin } from 'rxjs';
+import { catchError, forkJoin, of } from 'rxjs';
 import { ApiService } from '../core/api.service';
 import { Alert, Capabilities, Session } from '../core/models';
-import { PageTitleComponent, errorText, fmtDate } from '../shared/ui';
+import { PageTitleComponent, behaviorText, errorText, fmtDate, statusText } from '../shared/ui';
 
 @Component({
   standalone: true,
@@ -16,7 +16,7 @@ import { PageTitleComponent, errorText, fmtDate } from '../shared/ui';
       }
     </app-page-title>
 
-    @if (error()) { <div class="error-box">{{ error() }}</div> }
+    @if (countsError()) { <div class="error-box">Thống kê: {{ countsError() }}</div> }
 
     <div class="stats">
       @for (card of cards(); track card.key; let index = $index) {
@@ -47,6 +47,7 @@ import { PageTitleComponent, errorText, fmtDate } from '../shared/ui';
           <a class="button-link secondary small" routerLink="/sessions">Xem tất cả</a>
         </div>
         <div class="table-wrap">
+          @if (sessionsError()) { <div class="error-box">{{ sessionsError() }}</div> }
           <table>
             <thead><tr><th>Buổi học</th><th>Lớp học phần</th><th>Thời gian</th><th>Trạng thái</th></tr></thead>
             <tbody>
@@ -68,10 +69,11 @@ import { PageTitleComponent, errorText, fmtDate } from '../shared/ui';
       <div>
         <section class="card">
           <div class="card-header" style="margin:-20px -20px 16px"><div><h3>Hoạt động hôm nay</h3><p>Cảnh báo đang được theo dõi</p></div></div>
+          @if (alertsError()) { <div class="error-box">{{ alertsError() }}</div> }
           @for (alert of recentAlerts(); track alert.id) {
             <div class="service-card" style="margin-bottom:8px">
               <span class="status-dot" [style.background]="alert.status === 'OPEN' ? '#f59e0b' : '#16a34a'"></span>
-              <div><strong>{{ alert.type }}</strong><small>Session #{{ alert.sessionId }} · {{ date(alert.createdAt) }}</small></div>
+              <div><strong>{{ behaviorLabel(alert.type) }}</strong><small>Buổi học #{{ alert.sessionId }} · {{ date(alert.createdAt) }}</small></div>
             </div>
           } @empty {
             <div class="empty-state" style="min-height:140px"><div><strong>Không có cảnh báo gần đây</strong><span>Hệ thống chưa trả về hoạt động cần chú ý.</span></div></div>
@@ -80,6 +82,7 @@ import { PageTitleComponent, errorText, fmtDate } from '../shared/ui';
 
         <section class="card">
           <div class="card-header" style="margin:-20px -20px 16px"><div><h3>Tình trạng dịch vụ</h3><p>Dữ liệu kiểm tra năng lực hiện tại</p></div></div>
+          @if (capabilitiesError()) { <div class="error-box">{{ capabilitiesError() }}</div> }
           <div class="service-grid" style="grid-template-columns:1fr 1fr">
             @for (service of services(); track service.name) {
               <div class="service-card"><span class="status-dot" [style.background]="service.ok ? '#16a34a' : '#dc2626'"></span><div><strong>{{ service.name }}</strong><small>{{ service.ok ? 'Hoạt động' : 'Cần kiểm tra' }}</small></div></div>
@@ -91,7 +94,7 @@ import { PageTitleComponent, errorText, fmtDate } from '../shared/ui';
 
     <section class="card">
       <div class="card-header" style="margin:-20px -20px 16px"><div><h3>Phân tích hành vi</h3><p>Tổng hợp hành vi được hiển thị trong báo cáo theo buổi học, sinh viên hoặc lớp học phần.</p></div><a class="button-link secondary small" routerLink="/reports">Mở báo cáo</a></div>
-      <div class="empty-state" style="min-height:120px"><div><strong>Chọn phạm vi báo cáo để xem phân tích</strong><span>HTBAM không dùng dữ liệu mô phỏng trên Dashboard.</span></div></div>
+      <div class="empty-state" style="min-height:120px"><div><strong>Chọn phạm vi báo cáo để xem phân tích</strong><span>HTBAM không dùng dữ liệu mô phỏng trên màn tổng quan.</span></div></div>
     </section>
   `,
 })
@@ -101,7 +104,10 @@ export class DashboardComponent implements OnInit {
   readonly capabilities = signal<Capabilities | null>(null);
   readonly sessions = signal<Session[]>([]);
   readonly alerts = signal<Alert[]>([]);
-  readonly error = signal('');
+  readonly countsError = signal('');
+  readonly capabilitiesError = signal('');
+  readonly sessionsError = signal('');
+  readonly alertsError = signal('');
   readonly date = fmtDate;
   readonly todayLabel = signal(new Intl.DateTimeFormat('vi-VN', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' }).format(new Date()));
 
@@ -112,7 +118,7 @@ export class DashboardComponent implements OnInit {
       { key: 'classSections', label: 'Lớp học phần', value: values['classSections'] ?? '—', subtext: 'Đang hoạt động' },
       { key: 'sessions', label: 'Buổi học', value: values['sessions'] ?? '—', subtext: 'Tổng số buổi' },
       { key: 'cameras', label: 'Camera', value: values['cameras'] ?? '—', subtext: 'Đang hoạt động' },
-      { key: 'videos', label: 'Video đã xử lý', value: values['videos'] ?? '—', subtext: 'Trạng thái READY' },
+      { key: 'videos', label: 'Video đã xử lý', value: values['videos'] ?? '—', subtext: 'Đã sẵn sàng' },
       { key: 'openAlerts', label: 'Cảnh báo đang mở', value: values['openAlerts'] ?? '—', subtext: 'Cần theo dõi' },
     ];
   });
@@ -123,18 +129,22 @@ export class DashboardComponent implements OnInit {
     const c = this.capabilities();
     if (!c) return [];
     return [
-      { name: 'Backend', ok: c.backend }, { name: 'Database', ok: c.database },
-      { name: 'MinIO', ok: c.objectStorage }, { name: 'AI Service', ok: c.aiHealth },
-      { name: 'Face Recognition', ok: c.faceEnrollment }, { name: 'LLM Provider', ok: c.llmProvider !== 'NOT_CONFIGURED' },
+      { name: 'Máy chủ API', ok: c.backend }, { name: 'Cơ sở dữ liệu', ok: c.database },
+      { name: 'Kho lưu trữ MinIO', ok: c.objectStorage }, { name: 'Dịch vụ AI', ok: c.aiHealth },
+      { name: 'Nhận diện khuôn mặt', ok: c.faceEnrollment }, { name: 'Dịch vụ mô hình ngôn ngữ', ok: c.llmProvider !== 'NOT_CONFIGURED' },
     ];
   });
 
   ngOnInit(): void {
+    this.countsError.set('');
+    this.capabilitiesError.set('');
+    this.sessionsError.set('');
+    this.alertsError.set('');
     forkJoin({
-      counts: this.api.counts(),
-      capabilities: this.api.capabilities(),
-      sessions: this.api.sessions(),
-      alerts: this.api.alerts('status=OPEN'),
+      counts: this.api.counts().pipe(catchError((error) => { this.countsError.set(errorText(error)); return of({} as Record<string, number>); })),
+      capabilities: this.api.capabilities().pipe(catchError((error) => { this.capabilitiesError.set(errorText(error)); return of(null as Capabilities | null); })),
+      sessions: this.api.sessions().pipe(catchError((error) => { this.sessionsError.set(errorText(error)); return of([] as Session[]); })),
+      alerts: this.api.alerts('status=OPEN').pipe(catchError((error) => { this.alertsError.set(errorText(error)); return of([] as Alert[]); })),
     }).subscribe({
       next: (result) => {
         this.counts.set(result.counts);
@@ -142,11 +152,9 @@ export class DashboardComponent implements OnInit {
         this.sessions.set(result.sessions);
         this.alerts.set(result.alerts);
       },
-      error: (error) => this.error.set(errorText(error)),
     });
   }
 
-  sessionStatus(status: string): string {
-    return ({ RUNNING: 'Đang diễn ra', COMPLETED: 'Đã kết thúc', READY: 'Sẵn sàng', DRAFT: 'Bản nháp', CANCELLED: 'Đã hủy' } as Record<string, string>)[status] ?? status;
-  }
+  sessionStatus(status: string): string { return statusText(status); }
+  behaviorLabel(value: string): string { return behaviorText(value); }
 }

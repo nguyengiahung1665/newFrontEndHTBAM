@@ -1,3 +1,4 @@
+using HTBAM.Application.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace HTBAM.Api.Support;
@@ -7,9 +8,15 @@ public sealed class ApiExceptionMiddleware(RequestDelegate next, ILogger<ApiExce
     public async Task Invoke(HttpContext context)
     {
         try { await next(context); }
+        catch (OperationCanceledException ex) when (context.RequestAborted.IsCancellationRequested)
+        {
+            logger.LogInformation(ex, "Request aborted by client");
+            if (!context.Response.HasStarted) context.Response.StatusCode = 499;
+        }
         catch (KeyNotFoundException ex) { await Write(context, 404, "NOT_FOUND", ex.Message); }
         catch (DbUpdateConcurrencyException ex) { await Write(context, 409, "CONCURRENCY_CONFLICT", "Dữ liệu vừa được thay đổi bởi thao tác khác. Hãy tải lại và thử lại."); logger.LogWarning(ex, "Concurrency conflict"); }
-        catch (DbUpdateException ex) { await Write(context, 409, "DATA_CONFLICT", "Dữ liệu vi phạm ràng buộc hoặc đã tồn tại."); logger.LogWarning(ex, "Database conflict"); }
+        catch (DbUpdateException ex) { await Write(context, 409, "DATA_CONFLICT", "Không thể lưu thay đổi vì dữ liệu đã được cập nhật hoặc đang được sử dụng. Vui lòng tải lại và thử lại."); logger.LogWarning(ex, "Database conflict"); }
+        catch (AiServiceUnavailableException ex) { await Write(context, 503, "AI_SERVICE_UNAVAILABLE", ex.Message); }
         catch (InvalidOperationException ex) { await Write(context, 409, "INVALID_STATE", ex.Message); }
         catch (ArgumentException ex) { await Write(context, 400, "BAD_REQUEST", ex.Message); }
         catch (Exception ex)

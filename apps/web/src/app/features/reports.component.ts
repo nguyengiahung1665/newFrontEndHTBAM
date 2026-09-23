@@ -18,7 +18,7 @@ import { PageTitleComponent, errorText } from '../shared/ui';
         @for(metric of behaviorEntries();track metric.label){<div class="metric-row"><span>{{metric.label}}</span><div class="progress-track"><div class="progress-value" [style.width.%]="metric.value" [style.background]="metric.color"></div></div><strong>{{metric.value}}%</strong></div>}
         @empty{<div class="empty-state" style="min-height:150px"><div><strong>Chưa có tỷ lệ hành vi</strong><span>API không trả về dữ liệu tổng hợp cho phạm vi này.</span></div></div>}
       </section>
-      <section class="card"><div class="card-header" style="margin:-20px -20px 18px"><div><h3>Nhận xét tự động</h3><p>AI Analytics</p></div><span class="badge purple">AI</span></div>
+      <section class="card"><div class="card-header" style="margin:-20px -20px 18px"><div><h3>Nhận xét tự động</h3><p>Phân tích AI</p></div><span class="badge purple">AI</span></div>
         @if(autoComment()){<p style="line-height:1.7;color:#475569">{{autoComment()}}</p>}@else{<div class="empty-state" style="min-height:150px"><div><strong>Chưa có nhận xét</strong><span>Nhận xét AI chưa được tạo cho báo cáo này.</span></div></div>}
       </section>
     </div>

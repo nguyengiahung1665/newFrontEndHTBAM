@@ -2,7 +2,7 @@ import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { AuthService } from '../core/auth.service';
 import { UserInfo } from '../core/models';
-import { PageTitleComponent, errorText } from '../shared/ui';
+import { PageTitleComponent, errorText, roleText, statusText } from '../shared/ui';
 
 @Component({
   standalone: true,
@@ -26,11 +26,11 @@ import { PageTitleComponent, errorText } from '../shared/ui';
           <div class="avatar large">{{ initials() }}</div>
           <h2>{{ me()!.fullName }}</h2>
           <p>{{ me()!.email || 'Chưa có email' }}</p>
-          <span class="badge blue">{{ me()!.roles.join(', ') }}</span>
+          <span class="badge blue">{{ roles() }}</span>
           <div class="profile-list">
             <div><span>Tên đăng nhập</span><strong>{{ me()!.userName }}</strong></div>
-            <div><span>Trạng thái</span><strong>{{ me()!.status }}</strong></div>
-            <div><span>Vai trò</span><strong>{{ me()!.roles.join(', ') }}</strong></div>
+            <div><span>Trạng thái</span><strong>{{ statusText(me()!.status) }}</strong></div>
+            <div><span>Vai trò</span><strong>{{ roles() }}</strong></div>
           </div>
         }
       </section>
@@ -63,6 +63,7 @@ export class AccountComponent implements OnInit {
   readonly me = signal<UserInfo | null>(null);
   readonly error = signal('');
   readonly message = signal('');
+  readonly statusText = statusText;
   readonly form = this.fb.nonNullable.group({
     current: ['', Validators.required],
     next: ['', Validators.required],
@@ -79,6 +80,10 @@ export class AccountComponent implements OnInit {
   initials(): string {
     const name = this.me()?.fullName || this.me()?.userName || 'HTBAM';
     return name.split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]?.toUpperCase()).join('');
+  }
+
+  roles(): string {
+    return this.me()?.roles.map(roleText).join(', ') || 'Chưa phân quyền';
   }
 
   save(): void {

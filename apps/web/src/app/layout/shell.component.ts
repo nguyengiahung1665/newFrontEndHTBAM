@@ -23,6 +23,7 @@ interface NavigationItem {
   to: string;
   label: string;
   icon: 'grid' | 'users' | 'book' | 'video' | 'calendar' | 'bell' | 'clock' | 'chart' | 'search' | 'check' | 'server' | 'user' | 'shield' | 'log';
+  visible?: boolean;
 }
 
 @Component({
@@ -51,7 +52,7 @@ interface NavigationItem {
           </div>
           <div class="brand-copy">
             <strong>HTBAM</strong>
-            <small>Khoa Công nghệ Thông tin</small>
+            <small>Hệ thống theo dõi, phát hiện và đánh giá hành vi sinh viên</small>
           </div>
         </div>
 
@@ -59,6 +60,7 @@ interface NavigationItem {
           <div class="nav-group">
             <p class="nav-heading">Không gian làm việc</p>
             @for (link of workLinks; track link.to) {
+              @if (canSeeWorkLink(link)) {
               <a
                 [routerLink]="link.to"
                 routerLinkActive="active"
@@ -80,10 +82,12 @@ interface NavigationItem {
                     @case ('check') { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m20 6-11 11-5-5"/></svg> }
                     @case ('server') { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/></svg> }
                     @case ('user') { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> }
+                    @case ('shield') { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg> }
                   }
                 </span>
                 <span class="nav-label">{{ link.label }}</span>
               </a>
+              }
             }
           </div>
 
@@ -163,13 +167,14 @@ export class ShellComponent implements OnInit {
   readonly workLinks: NavigationItem[] = [
     { to: '/', label: 'Tổng quan', icon: 'grid' },
     { to: '/students', label: 'Sinh viên', icon: 'users' },
-    { to: '/management', label: 'Danh mục & lớp học', icon: 'book' },
+    { to: '/management', label: 'Danh mục', icon: 'book' },
+    { to: '/organization', label: 'Cơ cấu & phân quyền', icon: 'shield' },
     { to: '/videos', label: 'Dữ liệu video', icon: 'video' },
     { to: '/sessions', label: 'Buổi học', icon: 'calendar' },
     { to: '/alerts', label: 'Cảnh báo', icon: 'bell' },
     { to: '/history', label: 'Lịch sử', icon: 'clock' },
     { to: '/reports', label: 'Báo cáo', icon: 'chart' },
-    { to: '/search', label: 'Tìm kiếm', icon: 'search' },
+    { to: '/search', label: 'Tìm kiếm', icon: 'search', visible: false },
     { to: '/attendance', label: 'Chuyên cần', icon: 'check' },
     { to: '/system', label: 'Trạng thái hệ thống', icon: 'server' },
     { to: '/account', label: 'Tài khoản', icon: 'user' },
@@ -192,6 +197,30 @@ export class ShellComponent implements OnInit {
     if (roles.includes('TECH_AI')) return 'Kỹ thuật AI';
     return roles.join(', ') || 'Người dùng';
   });
+
+  canSeeWorkLink(
+    link: NavigationItem,
+  ): boolean {
+    if (link.visible === false) {
+      return false;
+    }
+
+    if (this.auth.isAdmin()) {
+      return (
+        link.to === '/system' ||
+        link.to === '/account'
+      );
+    }
+
+    if (
+      link.to === '/organization'
+    ) {
+      return this.auth
+        .canManageStructure();
+    }
+
+    return true;
+  }
 
   constructor() {
     this.updateBreadcrumb(this.router.url);

@@ -25,7 +25,7 @@ public sealed class AiClient(HttpClient http) : IAiClient
     {
         using var res = await http.GetAsync("capabilities", ct);
         res.EnsureSuccessStatusCode();
-        return await res.Content.ReadFromJsonAsync<AiCapabilitiesResponse>(cancellationToken: ct) ?? new AiCapabilitiesResponse(false, false, Array.Empty<string>());
+        return await res.Content.ReadFromJsonAsync<AiCapabilitiesResponse>(cancellationToken: ct) ?? new AiCapabilitiesResponse(false, false, false, Array.Empty<string>());
     }
 
     public async Task<StartFaceEnrollmentResponse> StartFaceEnrollmentAsync(FaceEnrollmentManifest request, CancellationToken ct = default)

@@ -23,10 +23,10 @@ public sealed class AlertsController(AppDbContext db, IAuditService audit) : Con
             if (!await AccessScope.CanAccessSessionAsync(db, User, sessionId.Value, ct)) return Forbid();
             query = query.Where(x => x.SessionId == sessionId);
         }
-        else if (User.IsInRole("LECTURER"))
+        else
         {
             var teacherId = await AccessScope.TeacherIdAsync(db, User, ct);
-            var allowedSessionIds = db.SessionsSet.Where(s => s.ClassSection.TeacherId == teacherId).Select(s => s.Id);
+            var allowedSessionIds = AccessScope.Sessions(db, User, teacherId).Select(s => s.Id);
             query = query.Where(x => allowedSessionIds.Contains(x.SessionId));
         }
 
@@ -40,20 +40,20 @@ public sealed class AlertsController(AppDbContext db, IAuditService audit) : Con
 
     public record NoteReq(string? Note);
 
-    [HttpPost("{id:long}/ack"), Authorize(Roles = "ADMIN,LECTURER")]
+    [HttpPost("{id:long}/ack"), Authorize(Roles = "LECTURER")]
     public Task<ActionResult> Ack(long id, NoteReq request, CancellationToken ct) => Transition(id, "ACK", request.Note, ct);
 
-    [HttpPost("{id:long}/close"), Authorize(Roles = "ADMIN,LECTURER")]
+    [HttpPost("{id:long}/close"), Authorize(Roles = "LECTURER")]
     public Task<ActionResult> Close(long id, NoteReq request, CancellationToken ct) => Transition(id, "CLOSED", request.Note, ct);
 
-    [HttpPost("{id:long}/reopen"), Authorize(Roles = "ADMIN,LECTURER")]
+    [HttpPost("{id:long}/reopen"), Authorize(Roles = "LECTURER")]
     public Task<ActionResult> Reopen(long id, NoteReq request, CancellationToken ct) => Transition(id, "OPEN", request.Note, ct);
 
     private async Task<ActionResult> Transition(long id, string target, string? note, CancellationToken ct)
     {
         var alert = await db.AlertsSet.FirstOrDefaultAsync(x => x.Id == id, ct);
         if (alert is null) return NotFound();
-        if (!await AccessScope.CanAccessSessionAsync(db, User, alert.SessionId, ct)) return Forbid();
+        if (!await AccessScope.CanOperateSessionAsync(db, User, alert.SessionId, ct)) return Forbid();
         alert.Status = target;
         alert.LecturerNote = string.IsNullOrWhiteSpace(note) ? alert.LecturerNote : note.Trim();
         if (target == "ACK") alert.AcknowledgedAt = DateTime.UtcNow;
@@ -78,8 +78,8 @@ public sealed class AlertsController(AppDbContext db, IAuditService audit) : Con
         var errors = RuleErrors(request);
         if (errors.Count > 0) return ValidationError(errors);
         var code = request.Code!.Trim().ToUpperInvariant();
-        if (await db.AlertRulesSet.AnyAsync(x => x.Code == code, ct))
-            return Conflict(new { message = $"Mã rule {code} đã tồn tại.", field = "code" });
+        if (await db.AlertRulesSet.AnyAsync(x => x.Code.ToUpper() == code, ct))
+            return Conflict(ApiValidation.Duplicate("ALERT_RULE_CODE_DUPLICATE", "code", $"Mã luật cảnh báo {code} đã tồn tại."));
 
         var rule = MapRule(new AlertRule(), request);
         db.AlertRulesSet.Add(rule);
@@ -96,8 +96,8 @@ public sealed class AlertsController(AppDbContext db, IAuditService audit) : Con
         var errors = RuleErrors(request);
         if (errors.Count > 0) return ValidationError(errors);
         var code = request.Code!.Trim().ToUpperInvariant();
-        if (await db.AlertRulesSet.AnyAsync(x => x.Id != id && x.Code == code, ct))
-            return Conflict(new { message = $"Mã rule {code} đã tồn tại.", field = "code" });
+        if (await db.AlertRulesSet.AnyAsync(x => x.Id != id && x.Code.ToUpper() == code, ct))
+            return Conflict(ApiValidation.Duplicate("ALERT_RULE_CODE_DUPLICATE", "code", $"Mã luật cảnh báo {code} đã tồn tại."));
 
         MapRule(rule, request);
         await db.SaveChangesAsync(ct);
@@ -130,21 +130,21 @@ public sealed class AlertsController(AppDbContext db, IAuditService audit) : Con
         var version = request.Version?.Trim() ?? "";
         var labels = new HashSet<string>(StringComparer.Ordinal) { "DISTRACTED", "SLEEPY", "PHONE_USE", "OUT_OF_VIEW" };
 
-        if (code.Length == 0) errors["code"] = ["Mã rule là bắt buộc."];
-        else if (code.Length > 64) errors["code"] = ["Mã rule không được vượt quá 64 ký tự."];
-        if (name.Length == 0) errors["name"] = ["Tên rule là bắt buộc."];
-        else if (name.Length > 256) errors["name"] = ["Tên rule không được vượt quá 256 ký tự."];
-        if (behavior.Length == 0) errors["behaviorLabel"] = ["Behavior là bắt buộc."];
-        else if (!labels.Contains(behavior)) errors["behaviorLabel"] = ["Behavior không được hỗ trợ."];
-        if (request.MinDurationSeconds is null) errors["minDurationSeconds"] = ["Duration là bắt buộc."];
-        else if (request.MinDurationSeconds <= 0) errors["minDurationSeconds"] = ["Duration phải lớn hơn 0."];
-        if (request.MinConfidence is null) errors["minConfidence"] = ["Confidence là bắt buộc."];
-        else if (request.MinConfidence < 0 || request.MinConfidence > 1) errors["minConfidence"] = ["Confidence phải nằm trong khoảng 0 đến 1."];
-        if (request.MinObservationQuality is null) errors["minObservationQuality"] = ["Quality là bắt buộc."];
-        else if (request.MinObservationQuality < 0 || request.MinObservationQuality > 1) errors["minObservationQuality"] = ["Quality phải nằm trong khoảng 0 đến 1."];
-        if (request.Enabled is null) errors["enabled"] = ["Trạng thái Enabled là bắt buộc."];
-        if (version.Length == 0) errors["version"] = ["Version là bắt buộc."];
-        else if (version.Length > 32) errors["version"] = ["Version không được vượt quá 32 ký tự."];
+        if (code.Length == 0) errors["code"] = ["Mã luật cảnh báo là bắt buộc."];
+        else if (code.Length > 64) errors["code"] = ["Mã luật cảnh báo không được vượt quá 64 ký tự."];
+        if (name.Length == 0) errors["name"] = ["Tên luật cảnh báo là bắt buộc."];
+        else if (name.Length > 256) errors["name"] = ["Tên luật cảnh báo không được vượt quá 256 ký tự."];
+        if (behavior.Length == 0) errors["behaviorLabel"] = ["Loại hành vi là bắt buộc."];
+        else if (!labels.Contains(behavior)) errors["behaviorLabel"] = ["Loại hành vi không được hỗ trợ."];
+        if (request.MinDurationSeconds is null) errors["minDurationSeconds"] = ["Thời lượng là bắt buộc."];
+        else if (request.MinDurationSeconds <= 0) errors["minDurationSeconds"] = ["Thời lượng phải lớn hơn 0."];
+        if (request.MinConfidence is null) errors["minConfidence"] = ["Độ tin cậy là bắt buộc."];
+        else if (request.MinConfidence < 0 || request.MinConfidence > 1) errors["minConfidence"] = ["Độ tin cậy phải nằm trong khoảng 0 đến 1."];
+        if (request.MinObservationQuality is null) errors["minObservationQuality"] = ["Chất lượng quan sát là bắt buộc."];
+        else if (request.MinObservationQuality < 0 || request.MinObservationQuality > 1) errors["minObservationQuality"] = ["Chất lượng quan sát phải nằm trong khoảng 0 đến 1."];
+        if (request.Enabled is null) errors["enabled"] = ["Trạng thái kích hoạt là bắt buộc."];
+        if (version.Length == 0) errors["version"] = ["Phiên bản là bắt buộc."];
+        else if (version.Length > 32) errors["version"] = ["Phiên bản không được vượt quá 32 ký tự."];
         return errors;
     }
 }

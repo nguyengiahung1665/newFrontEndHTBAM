@@ -2,11 +2,11 @@ import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@ang
 import { FormsModule } from '@angular/forms';
 import { ApiService } from '../core/api.service';
 import { Video } from '../core/models';
-import { ModalComponent, PageTitleComponent, errorText, fmtDate } from '../shared/ui';
+import { ModalComponent, PageTitleComponent, RowActionMenuComponent, errorText, fmtDate, statusText } from '../shared/ui';
 
 @Component({
   standalone: true,
-  imports: [FormsModule, PageTitleComponent, ModalComponent],
+  imports: [FormsModule, PageTitleComponent, ModalComponent, RowActionMenuComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <app-page-title title="Dữ liệu video" subtitle="Quản lý, xem trước và theo dõi trạng thái xử lý video.">
@@ -28,29 +28,38 @@ import { ModalComponent, PageTitleComponent, errorText, fmtDate } from '../share
           <option value="FAILED">Lỗi</option>
         </select>
       </label>
+      <label>Loại video
+        <select [(ngModel)]="typeFilter">
+          <option value="">Tất cả</option>
+          <option value="INPUT_UPLOAD">Video tải lên</option>
+          <option value="ANNOTATED_OUTPUT">Video chú thích</option>
+        </select>
+      </label>
       <button type="button" class="secondary" (click)="clearFilters()">Xóa lọc</button>
     </div>
 
     <section class="card table-card">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Tên file</th><th>Dung lượng</th><th>Ngày tải lên</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+          <thead><tr><th>Tên file</th><th>Loại video</th><th>Buổi học</th><th>Nguồn</th><th>Ngày tạo</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
           <tbody>
             @for (video of filteredItems(); track video.id) {
               <tr>
                 <td><span class="cell-title">{{ video.fileName }}</span><small>{{ video.contentType }}</small></td>
-                <td>{{ fileSize(video.sizeBytes) }}</td>
+                <td><span class="badge" [class.purple]="video.videoType === 'ANNOTATED_OUTPUT'">{{ typeLabel(video.videoType) }}</span><small>{{ fileSize(video.sizeBytes) }}</small></td>
+                <td>@if(video.sessionId){<span class="cell-title">{{ video.sessionCode || ('Buổi học #' + video.sessionId) }}</span><small>{{ video.courseName }}</small>}@else{—}</td>
+                <td>{{ sourceLabel(video) }}</td>
                 <td>{{ date(video.uploadedAt) }}</td>
                 <td><span class="badge" [class.blue]="video.status === 'PROCESSING' || video.status === 'UPLOADED'" [class.danger]="video.status === 'FAILED'">{{ statusLabel(video.status) }}</span></td>
-                <td>
-                  <div class="inline-actions">
+                <td class="menu-cell">
+                  <app-row-action-menu>
                     <button type="button" class="secondary small" [disabled]="video.status !== 'READY'" (click)="preview(video)">Xem trước</button>
                     <button type="button" class="danger small" (click)="pendingDelete.set(video)">Xóa</button>
-                  </div>
+                  </app-row-action-menu>
                 </td>
               </tr>
             } @empty {
-              <tr><td colspan="5" class="empty">Không có video phù hợp.</td></tr>
+              <tr><td colspan="7" class="empty">Không có video phù hợp.</td></tr>
             }
           </tbody>
         </table>
@@ -110,12 +119,14 @@ export class VideosComponent implements OnInit {
   readonly date = fmtDate;
   search = '';
   statusFilter = '';
+  typeFilter = '';
 
   filteredItems(): Video[] {
     const query = this.search.trim().toLowerCase();
     return this.items().filter((item) =>
       (!query || item.fileName.toLowerCase().includes(query)) &&
-      (!this.statusFilter || item.status === this.statusFilter),
+      (!this.statusFilter || item.status === this.statusFilter) &&
+      (!this.typeFilter || item.videoType === this.typeFilter),
     );
   }
 
@@ -165,7 +176,9 @@ export class VideosComponent implements OnInit {
     });
   }
 
-  clearFilters(): void { this.search = ''; this.statusFilter = ''; }
+  clearFilters(): void { this.search = ''; this.statusFilter = ''; this.typeFilter = ''; }
   fileSize(bytes: number): string { return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
-  statusLabel(status: string): string { return ({ READY: 'Hoàn tất', PROCESSING: 'Đang xử lý', UPLOADED: 'Chờ xử lý', FAILED: 'Lỗi' } as Record<string, string>)[status] ?? status; }
+  typeLabel(type: Video['videoType']): string { return type === 'ANNOTATED_OUTPUT' ? 'Video chú thích' : 'Video tải lên'; }
+  sourceLabel(video: Video): string { return video.sourceType === 'CAMERA' ? 'Camera' : video.sourceType === 'VIDEO' ? (video.parentVideoName || 'Video nguồn') : 'Tải lên'; }
+  statusLabel(status: string): string { return statusText(status); }
 }

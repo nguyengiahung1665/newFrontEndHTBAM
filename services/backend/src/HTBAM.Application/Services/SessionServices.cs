@@ -5,6 +5,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace HTBAM.Application.Services;
 
+public sealed class AiServiceUnavailableException(string message)
+    : Exception(message);
+
 public sealed class SessionService(IAppDbContext db, IAiClient ai, ISummaryService summary, IObjectStorage storage) : ISessionService
 {
     public async Task<Session> CreateAsync(CreateSessionRequest r, CancellationToken ct)
@@ -22,7 +25,7 @@ public sealed class SessionService(IAppDbContext db, IAiClient ai, ISummaryServi
             if (r.RoomId is not null && camera.RoomId != r.RoomId.Value)
                 throw new InvalidOperationException("Camera không thuộc phòng đã chọn.");
         }
-        if (r.VideoId is not null && !await db.Videos.AnyAsync(x => x.Id == r.VideoId.Value && x.Status == "READY", ct))
+        if (r.VideoId is not null && !await db.Videos.AnyAsync(x => x.Id == r.VideoId.Value && x.Status == "READY" && x.VideoType == "INPUT_UPLOAD", ct))
             throw new InvalidOperationException("Video không tồn tại hoặc chưa READY.");
 
         var classRoster = await db.Enrollments.Where(x => x.ClassSectionId == classSection.Id).Select(x => x.StudentId).ToArrayAsync(ct);
@@ -43,6 +46,7 @@ public sealed class SessionService(IAppDbContext db, IAiClient ai, ISummaryServi
         var s = new Session
         {
             ClassSectionId = r.ClassSectionId,
+            OriginalTeacherId = classSection.TeacherId,
             RoomId = r.RoomId,
             CameraId = r.CameraId,
             VideoId = r.VideoId,
@@ -65,9 +69,9 @@ public sealed class SessionService(IAppDbContext db, IAiClient ai, ISummaryServi
         if (s.Status != "READY") throw new InvalidOperationException($"Chỉ start Session READY. Hiện tại: {s.Status}");
         var roster = await db.SessionStudents.Where(x => x.SessionId == sessionId).Select(x => x.StudentId).ToArrayAsync(ct);
         if (roster.Length == 0) throw new InvalidOperationException("Roster rỗng.");
-        if (!await ai.HealthAsync(ct)) throw new InvalidOperationException("AI Service không sẵn sàng.");
+        if (!await ai.HealthAsync(ct)) throw new AiServiceUnavailableException("AI Service không sẵn sàng.");
         var capabilities = await ai.CapabilitiesAsync(ct);
-        if (!capabilities.SessionInference) throw new InvalidOperationException("AI Service đang chạy nhưng model inference Session chưa được tích hợp.");
+        if (!capabilities.SessionInference) throw new AiServiceUnavailableException("AI Service đang chạy nhưng model inference Session chưa được tích hợp.");
 
         s.Status = "STARTING";
         db.Update(s);
@@ -84,7 +88,18 @@ public sealed class SessionService(IAppDbContext db, IAiClient ai, ISummaryServi
                 ? (await db.Cameras.Where(x => x.Id == s.CameraId.Value && x.IsActive).Select(x => x.RtspUrl).FirstOrDefaultAsync(ct) ?? throw new InvalidOperationException("Camera không tồn tại/không hoạt động."))
                 : await GetVideoReadUrlAsync(s.VideoId!.Value, ct);
 
-            var res = await ai.StartAsync(new StartAiJobRequest(sessionId, sourceType, source, job.CorrelationId, roster, s.AlertProfile, callbackUrl, callbackApiKey), ct);
+            AiArtifactUploadTarget? annotatedVideoUpload = null;
+            if (capabilities.AnnotatedVideoOutput)
+            {
+                var objectKey = AnnotatedObjectKey(sessionId, job.CorrelationId);
+                annotatedVideoUpload = new AiArtifactUploadTarget(
+                    objectKey,
+                    await storage.GetInternalWriteUrlAsync(objectKey, 21600, ct),
+                    $"buoi-hoc-{sessionId}-annotations.mp4",
+                    "video/mp4");
+            }
+
+            var res = await ai.StartAsync(new StartAiJobRequest(sessionId, sourceType, source, job.CorrelationId, roster, s.AlertProfile, callbackUrl, callbackApiKey, annotatedVideoUpload), ct);
             if (!res.Status.Equals("RUNNING", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException($"AI không xác nhận RUNNING: {res.Status}");
 
             var now = DateTime.UtcNow;
@@ -111,7 +126,7 @@ public sealed class SessionService(IAppDbContext db, IAiClient ai, ISummaryServi
 
     private async Task<string> GetVideoReadUrlAsync(long videoId, CancellationToken ct)
     {
-        var storageRef = await db.Videos.Where(x => x.Id == videoId && x.Status == "READY").Select(x => x.StorageRef).FirstOrDefaultAsync(ct)
+        var storageRef = await db.Videos.Where(x => x.Id == videoId && x.Status == "READY" && x.VideoType == "INPUT_UPLOAD").Select(x => x.StorageRef).FirstOrDefaultAsync(ct)
             ?? throw new InvalidOperationException("Video không tồn tại/chưa READY.");
         return await storage.GetInternalReadUrlAsync(storageRef, 21600, ct);
     }
@@ -145,12 +160,25 @@ public sealed class SessionService(IAppDbContext db, IAiClient ai, ISummaryServi
     {
         try
         {
-            await ai.StopAsync(job.ExternalJobId, ct); // AI phải finalize/flush các BehaviorEvent đang mở trước khi trả COMPLETED.
+            var stop = await ai.StopAsync(job.ExternalJobId, ct); // AI phải finalize/flush các BehaviorEvent đang mở trước khi trả COMPLETED.
+            if (!stop.Status.Equals("COMPLETED", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"AI không xác nhận COMPLETED: {stop.Status}");
+            if (stop.Artifact is not null)
+                await PersistAnnotatedVideoAsync(s, job, stop.Artifact, ct);
+
             s.EndedAt = DateTime.UtcNow;
             await summary.RebuildSessionAsync(s.Id, ct);
 
             var identities = await db.StableIdentities.Where(x => x.SessionId == s.Id && x.State != "CLOSED").ToListAsync(ct);
             foreach (var identity in identities) { identity.State = "CLOSED"; db.Update(identity); }
+
+            var substitutions = await db.SessionSubstitutions.Where(x => x.SessionId == s.Id && x.Status == "ACTIVE").ToListAsync(ct);
+            foreach (var substitution in substitutions)
+            {
+                substitution.Status = "COMPLETED";
+                substitution.CompletedAt = s.EndedAt;
+                db.Update(substitution);
+            }
 
             job.Status = "COMPLETED";
             job.EndedAt = s.EndedAt;
@@ -170,6 +198,40 @@ public sealed class SessionService(IAppDbContext db, IAiClient ai, ISummaryServi
         }
     }
 
+    private async Task PersistAnnotatedVideoAsync(Session session, AnalysisJob job, AiArtifactMetadata artifact, CancellationToken ct)
+    {
+        if (await db.Videos.AnyAsync(v => v.SessionId == session.Id && v.VideoType == "ANNOTATED_OUTPUT" && v.Status != "DELETED", ct))
+            return;
+
+        var expectedObjectKey = AnnotatedObjectKey(session.Id, job.CorrelationId);
+        if (!string.Equals(artifact.ObjectKey, expectedObjectKey, StringComparison.Ordinal))
+            throw new InvalidOperationException("Artifact annotation không đúng object key đã được backend cấp.");
+        if (artifact.SizeBytes <= 0 || string.IsNullOrWhiteSpace(artifact.FileName) ||
+            string.IsNullOrWhiteSpace(artifact.ContentType) || !artifact.ContentType.StartsWith("video/", StringComparison.OrdinalIgnoreCase) ||
+            artifact.Sha256.Length != 64 || artifact.Sha256.Any(c => !Uri.IsHexDigit(c)))
+            throw new InvalidOperationException("Metadata artifact annotation không hợp lệ.");
+        if (!await storage.ExistsAsync(artifact.ObjectKey, ct))
+            throw new InvalidOperationException("AI đã khai báo artifact annotation nhưng tệp không tồn tại trong kho lưu trữ.");
+
+        await db.AddAsync(new Video
+        {
+            FileName = Path.GetFileName(artifact.FileName),
+            StorageRef = artifact.ObjectKey,
+            ContentType = artifact.ContentType,
+            SizeBytes = artifact.SizeBytes,
+            Sha256 = artifact.Sha256.ToLowerInvariant(),
+            Status = "READY",
+            VideoType = "ANNOTATED_OUTPUT",
+            SessionId = session.Id,
+            ParentVideoId = session.VideoId,
+            IsSystemGenerated = true
+        }, ct);
+        await db.SaveChangesAsync(ct);
+    }
+
+    private static string AnnotatedObjectKey(long sessionId, string correlationId) =>
+        $"annotations/sessions/{sessionId}/{correlationId}.mp4";
+
     public async Task<DashboardSnapshot> DashboardAsync(long sessionId, CancellationToken ct)
     {
         var s = await db.Sessions.FirstOrDefaultAsync(x => x.Id == sessionId, ct) ?? throw new KeyNotFoundException("Session không tồn tại.");
@@ -186,7 +248,7 @@ public sealed class SessionService(IAppDbContext db, IAiClient ai, ISummaryServi
         var alerts = await db.Alerts.Where(x => x.SessionId == sessionId).OrderByDescending(x => x.CreatedAt).Take(20).Select(x => new { x.Id, x.Type, x.StudentId, x.Status, x.Confidence, x.ObservationQuality, x.StartedAt, x.EndedAt, x.CreatedAt }).ToListAsync(ct);
         var cameraHealth = "N/A";
         if (s.CameraId is not null) cameraHealth = await db.Cameras.Where(x => x.Id == s.CameraId).Select(x => x.Status).FirstOrDefaultAsync(ct) ?? "UNKNOWN";
-        var aiHealthy = await ai.HealthAsync(ct); var capabilities = aiHealthy ? await ai.CapabilitiesAsync(ct) : new AiCapabilitiesResponse(false,false,Array.Empty<string>());
+        var aiHealthy = await ai.HealthAsync(ct); var capabilities = aiHealthy ? await ai.CapabilitiesAsync(ct) : new AiCapabilitiesResponse(false,false,false,Array.Empty<string>());
         return new DashboardSnapshot(sessionId,s.Status,cameraHealth,aiHealthy?"ONLINE":"OFFLINE",capabilities.SessionInference,stableEntities.Count(x=>x.State=="ACTIVE"),stableEntities.Count(x=>x.StudentId!=null),stableEntities.Count(x=>x.StudentId==null),new BehaviorRatios(ratio("FOCUSED"),ratio("DISTRACTED"),ratio("SLEEPY"),ratio("ACTIVE")),stateEvents.Count(x=>x.Label=="SLEEPY"),stateEvents.Count(x=>x.Label=="ACTIVE"),identityRows,alerts.Cast<object>().ToList(),DateTime.UtcNow);
     }
 }
