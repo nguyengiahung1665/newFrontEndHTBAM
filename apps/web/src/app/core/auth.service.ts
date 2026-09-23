@@ -1,7 +1,15 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
-import { Observable, tap } from 'rxjs';
+import {
+  Observable,
+  finalize,
+  of,
+  shareReplay,
+  switchMap,
+  tap,
+  throwError,
+} from 'rxjs';
 import { LoginResponse, UserInfo } from './models';
 
 @Injectable({
@@ -18,9 +26,11 @@ export class AuthService {
     this.readInitialToken(),
   );
 
-  readonly user = signal<Partial<UserInfo>>(
-    this.readUser(),
-  );
+  private profileRequest?: Observable<UserInfo>;
+
+  readonly user = signal<Partial<UserInfo>>({});
+  readonly profileLoaded = signal(false);
+  readonly profileLoading = signal(false);
 
   readonly isLoggedIn = computed(
     () => !!this.tokenState(),
@@ -30,6 +40,29 @@ export class AuthService {
     () => this.user().roles?.includes('ADMIN') ?? false,
   );
 
+  readonly canAssignSubstitute = computed(
+    () => this.user().permissions?.includes('SUBSTITUTE_ASSIGN') ?? false,
+  );
+
+  readonly canManageStructure = computed(
+    () =>
+      this.profileLoaded() &&
+      !this.isAdmin() &&
+      (this.user().managementAssignments?.length ?? 0) > 0,
+  );
+
+  readonly canEditStudents = computed(
+    () => this.user().permissions?.includes('STUDENT_EDIT_SCOPE') ?? false,
+  );
+
+  readonly canCreateStudents = computed(
+    () => this.user().permissions?.includes('STUDENT_CREATE') ?? false,
+  );
+
+  readonly canEnrollFaces = computed(
+    () => this.hasPermission('FACE_ENROLL_SCOPE'),
+  );
+
   token(): string | null {
     return this.tokenState();
   }
@@ -37,7 +70,7 @@ export class AuthService {
   login(
     userName: string,
     password: string,
-  ): Observable<LoginResponse> {
+  ): Observable<UserInfo> {
     return this.http
       .post<LoginResponse>('/api/auth/login', {
         userName,
@@ -53,23 +86,11 @@ export class AuthService {
           this.tokenState.set(
             response.accessToken,
           );
-
-          const currentUser: Partial<UserInfo> = {
-            id: response.userId,
-            userName,
-            email: '',
-            fullName: response.fullName,
-            status: 'ACTIVE',
-            roles: response.roles,
-          };
-
-          sessionStorage.setItem(
-            this.userKey,
-            JSON.stringify(currentUser),
-          );
-
-          this.user.set(currentUser);
+          sessionStorage.removeItem(this.userKey);
+          this.user.set({});
+          this.profileLoaded.set(false);
         }),
+        switchMap(() => this.ensureProfile()),
       );
   }
 
@@ -77,6 +98,7 @@ export class AuthService {
     return this.http.get<UserInfo>('/api/auth/me').pipe(
       tap((currentUser) => {
         this.user.set(currentUser);
+        this.profileLoaded.set(true);
 
         sessionStorage.setItem(
           this.userKey,
@@ -84,6 +106,45 @@ export class AuthService {
         );
       }),
     );
+  }
+
+  ensureProfile(): Observable<UserInfo> {
+    if (!this.tokenState()) {
+      return throwError(
+        () => new Error('AUTH_TOKEN_MISSING'),
+      );
+    }
+
+    if (this.profileLoaded()) {
+      return of(this.user() as UserInfo);
+    }
+
+    if (this.profileRequest) {
+      return this.profileRequest;
+    }
+
+    this.profileLoading.set(true);
+    const request = this.me().pipe(
+      finalize(() => {
+        this.profileLoading.set(false);
+
+        if (this.profileRequest === request) {
+          this.profileRequest = undefined;
+        }
+      }),
+      shareReplay({
+        bufferSize: 1,
+        refCount: false,
+      }),
+    );
+
+    this.profileRequest = request;
+    return request;
+  }
+
+  hasPermission(permission: string): boolean {
+    return this.profileLoaded() &&
+      (this.user().permissions?.includes(permission) ?? false);
   }
 
   changePassword(
@@ -114,6 +175,9 @@ export class AuthService {
 
     this.tokenState.set(null);
     this.user.set({});
+    this.profileLoaded.set(false);
+    this.profileLoading.set(false);
+    this.profileRequest = undefined;
 
     if (navigateToLogin) {
       void this.router.navigateByUrl('/login');
@@ -139,16 +203,6 @@ export class AuthService {
     }
 
     return token;
-  }
-
-  private readUser(): Partial<UserInfo> {
-    try {
-      return JSON.parse(
-        sessionStorage.getItem(this.userKey) || '{}',
-      ) as Partial<UserInfo>;
-    } catch {
-      return {};
-    }
   }
 
   private isJwtExpired(token: string): boolean {

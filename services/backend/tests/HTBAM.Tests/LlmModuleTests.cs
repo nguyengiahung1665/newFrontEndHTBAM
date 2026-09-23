@@ -133,7 +133,7 @@ public sealed class LlmModuleTests
     }
 
     [Fact]
-    public async Task Admin_can_generate_for_any_session()
+    public async Task Admin_cannot_generate_business_comment_without_teaching_scope()
     {
         await using var db = CreateDb();
         await SeedSessionAsync(db);
@@ -142,7 +142,7 @@ public sealed class LlmModuleTests
 
         var response = await controller.GenerateSessionComment(100, CancellationToken.None);
 
-        Assert.IsType<OkObjectResult>(response);
+        Assert.IsType<ForbidResult>(response);
     }
 
     [Fact]
@@ -168,6 +168,7 @@ public sealed class LlmModuleTests
 
     private static async Task SeedSessionAsync(AppDbContext db)
     {
+        db.UsersSet.Add(new User { Id = 500, UserName = "lecturer", FullName = "Lecturer", Status = "ACTIVE" });
         var teacher = new Teacher { Id = 10, TeacherCode = "GV01", FullName = "Lecturer", UserId = 500 };
         var course = new Course { Id = 20, Code = "CS", Name = "Course" };
         var section = new ClassSection { Id = 30, Code = "CLS01", Name = "Class", CourseId = 20, Course = course, TeacherId = 10, Teacher = teacher };

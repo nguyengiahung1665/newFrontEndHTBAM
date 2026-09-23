@@ -2,11 +2,11 @@ import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@ang
 import { FormsModule } from '@angular/forms';
 import { ApiService } from '../core/api.service';
 import { Alert } from '../core/models';
-import { ModalComponent, PageTitleComponent, errorText, fmtDate } from '../shared/ui';
+import { ModalComponent, PageTitleComponent, RowActionMenuComponent, behaviorText, errorText, fmtDate, statusText } from '../shared/ui';
 
 @Component({
   standalone: true,
-  imports: [FormsModule, PageTitleComponent, ModalComponent],
+  imports: [FormsModule, PageTitleComponent, ModalComponent, RowActionMenuComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <app-page-title title="Cảnh báo" subtitle="Theo dõi, xác nhận và xử lý cảnh báo từ các buổi học." />
@@ -14,7 +14,7 @@ import { ModalComponent, PageTitleComponent, errorText, fmtDate } from '../share
     @if (message()) { <div class="success-box">{{ message() }}</div> }
 
     <div class="filter-bar">
-      <label>Buổi học<input type="number" [(ngModel)]="sessionId" placeholder="Session ID" /></label>
+      <label>Buổi học<input type="number" [(ngModel)]="sessionId" placeholder="Mã buổi học" /></label>
       <label>Trạng thái<select [(ngModel)]="status"><option value="">Tất cả</option><option value="OPEN">Đang mở</option><option value="ACKNOWLEDGED">Đã xác nhận</option><option value="CLOSED">Đã đóng</option></select></label>
       <button type="button" (click)="load()">Tìm kiếm</button>
       <button type="button" class="secondary" (click)="clearFilters()">Xóa lọc</button>
@@ -26,14 +26,14 @@ import { ModalComponent, PageTitleComponent, errorText, fmtDate } from '../share
         <tbody>
           @for (alert of items(); track alert.id) {
             <tr>
-              <td><span class="badge" [class.danger]="severity(alert) === 'Critical'" [class.warning]="severity(alert) === 'Warning'" [class.blue]="severity(alert) === 'Info'">{{ severity(alert) }}</span></td>
-              <td class="cell-title">#{{ alert.sessionId }}</td><td>{{ alert.type }}</td><td>{{ percent(alert.confidence) }}</td><td>{{ percent(alert.observationQuality) }}</td><td>{{ date(alert.createdAt) }}</td>
+              <td><span class="badge" [class.danger]="severity(alert) === 'Critical'" [class.warning]="severity(alert) === 'Warning'" [class.blue]="severity(alert) === 'Info'">{{ severityLabel(alert) }}</span></td>
+              <td class="cell-title">#{{ alert.sessionId }}</td><td>{{ behaviorLabel(alert.type) }}</td><td>{{ percent(alert.confidence) }}</td><td>{{ percent(alert.observationQuality) }}</td><td>{{ date(alert.createdAt) }}</td>
               <td><span class="badge" [class.gray]="alert.status === 'CLOSED'" [class.blue]="alert.status === 'ACKNOWLEDGED'">{{ statusLabel(alert.status) }}</span></td>
-              <td><div class="inline-actions">
+              <td class="menu-cell"><app-row-action-menu>
                 @if (alert.status === 'OPEN') { <button type="button" class="small" (click)="openAction(alert, 'ack')">Xác nhận</button> }
-                @if (alert.status !== 'CLOSED') { <button type="button" class="secondary small" (click)="openAction(alert, 'close')">Đóng</button> }
+                @if (alert.status !== 'CLOSED') { <button type="button" class="danger" (click)="openAction(alert, 'close')">Đóng</button> }
                 @else { <button type="button" class="secondary small" (click)="openAction(alert, 'reopen')">Mở lại</button> }
-              </div></td>
+              </app-row-action-menu></td>
             </tr>
           } @empty { <tr><td colspan="8" class="empty">Không có cảnh báo phù hợp.</td></tr> }
         </tbody>
@@ -43,7 +43,7 @@ import { ModalComponent, PageTitleComponent, errorText, fmtDate } from '../share
     @if (selectedAlert()) {
       <app-modal [title]="actionTitle()" size="sm" [busy]="saving()" (close)="closeAction()">
         <div class="stack">
-          <p style="margin-top:0">Cảnh báo <b>{{ selectedAlert()!.type }}</b> của buổi học #{{ selectedAlert()!.sessionId }}.</p>
+          <p style="margin-top:0">Cảnh báo <b>{{ behaviorLabel(selectedAlert()!.type) }}</b> của buổi học #{{ selectedAlert()!.sessionId }}.</p>
           <label>Ghi chú<textarea [(ngModel)]="note" rows="4" placeholder="Ghi chú xử lý (không bắt buộc)"></textarea></label>
           <div class="modal-footer" style="margin:0 -20px -20px"><button type="button" class="secondary" [disabled]="saving()" (click)="closeAction()">Hủy</button><button type="button" [disabled]="saving()" (click)="confirmAction()">{{ saving() ? 'Đang lưu…' : 'Xác nhận' }}</button></div>
         </div>
@@ -66,6 +66,8 @@ export class AlertsComponent implements OnInit {
   confirmAction(): void { const alert = this.selectedAlert(); if (!alert) return; this.saving.set(true); this.api.alertAction(alert.id, this.selectedAction(), this.note.trim()).subscribe({ next: () => { this.saving.set(false); this.selectedAlert.set(null); this.message.set('Đã cập nhật cảnh báo.'); this.load(); }, error: (error) => { this.error.set(errorText(error)); this.saving.set(false); } }); }
   percent(value: number): string { return `${Math.round(value * 100)}%`; }
   severity(alert: Alert): 'Critical' | 'Warning' | 'Info' { if (alert.type.toUpperCase().includes('SLEEP') || alert.confidence >= .9) return 'Critical'; if (alert.confidence >= .65) return 'Warning'; return 'Info'; }
-  statusLabel(status: string): string { return ({ OPEN: 'Đang mở', ACKNOWLEDGED: 'Đã xác nhận', CLOSED: 'Đã đóng' } as Record<string,string>)[status] ?? status; }
+  severityLabel(alert: Alert): string { return ({ Critical: 'Nghiêm trọng', Warning: 'Cảnh báo', Info: 'Thông tin' } as Record<string,string>)[this.severity(alert)]; }
+  statusLabel(status: string): string { return statusText(status); }
+  behaviorLabel(value: string): string { return behaviorText(value); }
   actionTitle(): string { return ({ ack: 'Xác nhận cảnh báo', close: 'Đóng cảnh báo', reopen: 'Mở lại cảnh báo' } as Record<string,string>)[this.selectedAction()]; }
 }

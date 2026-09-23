@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
-import { Alert, AttendancePolicy, Camera, Capabilities, ClassSection, Course, Department, Faculty, FaceEnrollment, Room, Session, Student, StudentClass, StudentStatusFilter, Teacher, Video, AdminUser } from './models';
+import { Alert, AttendancePolicy, Camera, Capabilities, ClassSection, Course, Department, Faculty, FaceEnrollment, Room, Session, Student, StudentClass, StudentStatusFilter, Teacher, Video, AdminUser, ManagementAssignment } from './models';
 
 @Injectable({providedIn:'root'})
 export class ApiService {
@@ -25,6 +25,7 @@ export class ApiService {
   cameras(){return this.http.get<Camera[]>('/api/catalogs/cameras')}
   saveCatalog(resource:string,id:number|null,body:any){return id?this.http.put(`/api/catalogs/${resource}/${id}`,body):this.http.post(`/api/catalogs/${resource}`,body)}
   deactivateCatalog(resource:string,id:number){return this.http.delete(`/api/catalogs/${resource}/${id}`)}
+  reactivateCatalog(resource:string,id:number){return this.http.post(`/api/catalogs/${resource}/${id}/reactivate`,{})}
   testCamera(id:number){return this.http.post<any>(`/api/catalogs/cameras/${id}/test`,{})}
   roster(id:number){return this.http.get<any[]>(`/api/catalogs/class-sections/${id}/roster`)}
   setRoster(id:number,studentIds:number[]){return this.http.put(`/api/catalogs/class-sections/${id}/roster`,{studentIds})}
@@ -40,6 +41,9 @@ export class ApiService {
   createSession(body:any){return this.http.post<any>('/api/sessions',body)}
   updateSession(id:number,body:any){return this.http.put(`/api/sessions/${id}`,body)}
   sessionAction(id:number,action:'start'|'stop'|'cancel'|'retry-finalize'){return this.http.post(`/api/sessions/${id}/${action}`,{})}
+  sessionSubstitution(id:number){return this.http.get<any>(`/api/sessions/${id}/substitution`)}
+  assignSubstitution(id:number,body:{substituteTeacherId:number;reason:string;note?:string}){return this.http.post(`/api/sessions/${id}/substitution`,body)}
+  cancelSubstitution(id:number){return this.http.delete(`/api/sessions/${id}/substitution`)}
 
   alerts(query=''){return this.http.get<Alert[]>(`/api/alerts${query?'?'+query:''}`)}
   alertAction(id:number,action:'ack'|'close'|'reopen',note=''){return this.http.post(`/api/alerts/${id}/${action}`,{note})}
@@ -47,6 +51,8 @@ export class ApiService {
 
   policies(){return this.http.get<AttendancePolicy[]>('/api/attendance-policies')}
   savePolicy(id:number|null,body:any){return id?this.http.put(`/api/attendance-policies/${id}`,body):this.http.post('/api/attendance-policies',body)}
+  deactivatePolicy(id:number){return this.http.delete(`/api/attendance-policies/${id}`)}
+  reactivatePolicy(id:number){return this.http.post(`/api/attendance-policies/${id}/reactivate`,{})}
 
   capabilities(){return this.http.get<Capabilities>('/api/system/capabilities')}
   counts(){return this.http.get<any>('/api/system/counts')}
@@ -55,6 +61,11 @@ export class ApiService {
   adminUsers(q=''){return this.http.get<AdminUser[]>(`/api/admin/users?q=${encodeURIComponent(q)}`)}
   saveAdminUser(id:number|null,body:any){return id?this.http.put(`/api/admin/users/${id}`,body):this.http.post('/api/admin/users',body)}
   adminStatus(id:number,status:string){return this.http.put(`/api/admin/users/${id}/status`,{status})}
+  resetAdminPassword(id:number,newPassword:string){return this.http.post(`/api/admin/users/${id}/reset-password`,{newPassword})}
+  managementAssignments(){return this.http.get<any[]>('/api/management-assignments')}
+  transferFacultyHead(body:{teacherId:number;facultyId:number;note?:string}){return this.http.post<ManagementAssignment>('/api/management-assignments/faculty-head',body)}
+  assignDepartmentHead(body:{teacherId:number;departmentId:number;note?:string}){return this.http.post<ManagementAssignment>('/api/management-assignments/department-head',body)}
+  revokeManagementAssignment(id:number){return this.http.delete(`/api/management-assignments/${id}`)}
   historySession(id:number,kind:'behaviors'|'attendance'|'identities'){return this.http.get<any[]>(`/api/history/sessions/${id}/${kind}`)}
   report(kind:'sessions'|'students'|'class-sections',id:number){return this.http.get<any>(`/api/reports/${kind}/${id}`)}
   exportReport(kind:'sessions'|'students'|'class-sections',id:number,format:'pdf'|'excel'){return this.http.get(`/api/reports/${kind}/${id}/${format}`,{responseType:'blob'})}

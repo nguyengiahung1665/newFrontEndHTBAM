@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text;
 using System.Threading.RateLimiting;
+using System.Net;
 using HTBAM.Api.Support;
 using HTBAM.Application.Interfaces;
 using HTBAM.Application.Services;
@@ -8,6 +9,7 @@ using HTBAM.Infrastructure.Data;
 using HTBAM.Infrastructure.Services;
 using HTBAM.Infrastructure.Services.Llm;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -74,19 +76,30 @@ builder.Services.AddHttpClient<IAiClient, AiClient>(client =>
     client.Timeout = TimeSpan.FromSeconds(30);
 });
 
+var authRateLimit =
+    builder.Configuration
+        .GetSection("AuthRateLimit")
+        .Get<AuthRateLimitSettings>()
+    ?? new AuthRateLimitSettings();
+
 builder.Services.AddRateLimiter(options =>
 {
-    options.AddFixedWindowLimiter(
+    options.AddPolicy(
         "auth",
-        limiter =>
-        {
-            limiter.PermitLimit = 10;
-            limiter.Window = TimeSpan.FromMinutes(1);
-            limiter.QueueLimit = 0;
-            limiter.AutoReplenishment = true;
-        });
+        context =>
+            AuthRateLimitPolicy.Partition(
+                context,
+                authRateLimit));
 
-    options.RejectionStatusCode = 429;
+    options.RejectionStatusCode =
+        StatusCodes.Status429TooManyRequests;
+    options.OnRejected =
+        (context, cancellationToken) =>
+            AuthRateLimitPolicy.WriteRejectedAsync(
+                context.HttpContext,
+                context.Lease,
+                authRateLimit.WindowSeconds,
+                cancellationToken);
 });
 
 var key = Encoding.UTF8.GetBytes(
@@ -189,6 +202,21 @@ QuestPDF.Settings.License =
 var app = builder.Build();
 
 app.UseMiddleware<ApiExceptionMiddleware>();
+
+app.UseForwardedHeaders(
+    new ForwardedHeadersOptions
+    {
+        ForwardedHeaders =
+            ForwardedHeaders.XForwardedFor |
+            ForwardedHeaders.XForwardedProto,
+        ForwardLimit = 1,
+        KnownNetworks =
+        {
+            new Microsoft.AspNetCore.HttpOverrides.IPNetwork(
+                IPAddress.Parse("172.16.0.0"),
+                12),
+        },
+    });
 
 if (app.Environment.IsDevelopment())
 {

@@ -5,10 +5,12 @@ public record StudentDto(long Id,string StudentCode,string FullName,string Email
 public record UpsertStudentRequest(string StudentCode,string FullName,string Email,long? StudentClassId,string AnonymousCode,bool IsActive=true);
 public record CreateSessionRequest(long ClassSectionId,long? RoomId,long? CameraId,long? VideoId,long AttendancePolicyId,DateTime ScheduledStart,DateTime? ScheduledEnd,long[] StudentIds,string AlertProfile="DEFAULT");
 public record SessionDto(long Id,long ClassSectionId,DateTime ScheduledStart,DateTime? ScheduledEnd,DateTime? StartedAt,DateTime? EndedAt,string Status,long? CameraId,long? VideoId,long AttendancePolicyId);
-public record StartAiJobRequest(long SessionId,string SourceType,string Source,string CorrelationId,long[] RosterStudentIds,string AlertProfile,string CallbackUrl,string CallbackApiKey);
+public record AiArtifactUploadTarget(string ObjectKey,string UploadUrl,string FileName,string ContentType);
+public record StartAiJobRequest(long SessionId,string SourceType,string Source,string CorrelationId,long[] RosterStudentIds,string AlertProfile,string CallbackUrl,string CallbackApiKey,AiArtifactUploadTarget? AnnotatedVideoUpload=null);
 public record StartAiJobResponse(string JobId,string Status,string ModelVersion);
-public record StopAiJobResponse(string JobId,string Status);
-public record AiCapabilitiesResponse(bool SessionInference,bool FaceEnrollment,string[] LoadedModels);
+public record AiArtifactMetadata(string ObjectKey,string FileName,string ContentType,long SizeBytes,string Sha256);
+public record StopAiJobResponse(string JobId,string Status,AiArtifactMetadata? Artifact=null);
+public record AiCapabilitiesResponse(bool SessionInference,bool FaceEnrollment,bool AnnotatedVideoOutput,string[] LoadedModels);
 public record AiEventEnvelope(string EventId,long SessionId,string EventType,DateTime Timestamp,string StableId,string? TrackId,long? StudentId,decimal? IdentityConfidence,decimal? IdentityMargin,string? BehaviorLabel,decimal? BehaviorProbability,decimal ObservationQuality,string? AlertType,int? AlertDurationSeconds,string ModelVersion,string ThresholdVersion,DateTime? StartedAt=null,DateTime? EndedAt=null,string? IdentityDecision=null);
 public record BehaviorRatios(decimal Focused,decimal Distracted,decimal Sleepy,decimal Active);
 public record DashboardSnapshot(long SessionId,string Status,string CameraHealth,string AiHealth,bool ModelReady,int ActiveIdentities,int IdentifiedStudents,int UnknownIdentities,BehaviorRatios Behavior,int SleepyCount,int ActiveCount,IReadOnlyList<object> Identities,IReadOnlyList<object> RecentAlerts,DateTime GeneratedAt);

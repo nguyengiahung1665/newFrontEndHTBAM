@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnDestroy, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { AuthService } from '../core/auth.service';
@@ -86,8 +86,8 @@ import { errorText } from '../shared/ui';
               Ghi nhớ phiên đăng nhập
             </label>
 
-            <button class="login-submit" type="submit" [disabled]="loading()">
-              {{ loading() ? 'Đang đăng nhập…' : 'Đăng nhập' }}
+            <button class="login-submit" type="submit" [disabled]="loading() || cooldownSeconds() > 0">
+              {{ loading() ? 'Đang đăng nhập…' : cooldownSeconds() > 0 ? 'Thử lại sau ' + cooldownSeconds() + ' giây' : 'Đăng nhập' }}
             </button>
           </form>
           <p class="login-footer">© 2026 HTBAM — Khoa Công nghệ Thông tin</p>
@@ -96,7 +96,7 @@ import { errorText } from '../shared/ui';
     </div>
   `,
 })
-export class LoginComponent {
+export class LoginComponent implements OnDestroy {
   private readonly fb = inject(FormBuilder);
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
@@ -104,6 +104,10 @@ export class LoginComponent {
   readonly loading = signal(false);
   readonly error = signal('');
   readonly showPassword = signal(false);
+  readonly cooldownSeconds = signal(0);
+  private readonly cooldownKey = 'htbam_login_rate_limit_until';
+  private cooldownDeadline = 0;
+  private countdownTimer?: ReturnType<typeof setInterval>;
   readonly students = [
     { x: 80, active: true },
     { x: 142, active: false },
@@ -119,8 +123,16 @@ export class LoginComponent {
     remember: [false],
   });
 
+  constructor() {
+    this.restoreCooldown();
+  }
+
   submit(): void {
-    if (this.form.invalid || this.loading()) {
+    if (
+      this.form.invalid ||
+      this.loading() ||
+      this.cooldownSeconds() > 0
+    ) {
       this.form.markAllAsTouched();
       return;
     }
@@ -131,13 +143,113 @@ export class LoginComponent {
 
     this.auth.login(value.userName.trim(), value.password).subscribe({
       next: () => {
+        this.clearStoredCooldown();
         this.loading.set(false);
         void this.router.navigateByUrl('/');
       },
       error: (error) => {
         this.loading.set(false);
+
+        if (Number(error?.status) === 401) {
+          this.error.set('Tài khoản hoặc mật khẩu không đúng.');
+          return;
+        }
+
+        if (Number(error?.status) === 429) {
+          const bodySeconds = Number(
+            error?.error?.retryAfterSeconds,
+          );
+          const headerSeconds = Number(
+            error?.headers?.get?.('Retry-After'),
+          );
+          const seconds =
+            Number.isFinite(bodySeconds) && bodySeconds > 0
+              ? Math.ceil(bodySeconds)
+              : Number.isFinite(headerSeconds) && headerSeconds > 0
+                ? Math.ceil(headerSeconds)
+                : 60;
+
+          this.startCooldown(seconds);
+          return;
+        }
+
         this.error.set(errorText(error));
       },
     });
+  }
+
+  ngOnDestroy(): void {
+    this.stopCountdown();
+  }
+
+  private startCooldown(seconds: number): void {
+    this.stopCountdown();
+    this.cooldownDeadline = Date.now() + Math.max(1, seconds) * 1000;
+    try {
+      sessionStorage.setItem(this.cooldownKey, String(this.cooldownDeadline));
+    } catch {
+      // Countdown vẫn hoạt động trong phiên hiện tại nếu storage bị chặn.
+    }
+    this.runCountdown();
+  }
+
+  private runCountdown(): void {
+    this.refreshCooldown();
+    if (this.cooldownSeconds() === 0) return;
+    this.countdownTimer = setInterval(() => {
+      this.refreshCooldown();
+    }, 1000);
+  }
+
+  private refreshCooldown(): void {
+    const remaining = Math.max(
+      0,
+      Math.ceil((this.cooldownDeadline - Date.now()) / 1000),
+    );
+    this.cooldownSeconds.set(remaining);
+    if (remaining > 0) {
+      this.updateCooldownMessage();
+      return;
+    }
+
+    this.stopCountdown();
+    this.clearStoredCooldown();
+    this.error.set('Bạn có thể thử đăng nhập lại.');
+  }
+
+  private restoreCooldown(): void {
+    try {
+      const storedDeadline = Number(sessionStorage.getItem(this.cooldownKey));
+      if (Number.isFinite(storedDeadline) && storedDeadline > Date.now()) {
+        this.cooldownDeadline = storedDeadline;
+        this.runCountdown();
+      } else {
+        sessionStorage.removeItem(this.cooldownKey);
+      }
+    } catch {
+      // Trình duyệt có thể chặn sessionStorage; login vẫn hoạt động bình thường.
+    }
+  }
+
+  private updateCooldownMessage(): void {
+    this.error.set(
+      `Bạn đã thử đăng nhập quá nhiều lần. Vui lòng thử lại sau ${this.cooldownSeconds()} giây.`,
+    );
+  }
+
+  private stopCountdown(): void {
+    if (this.countdownTimer) {
+      clearInterval(this.countdownTimer);
+      this.countdownTimer = undefined;
+    }
+  }
+
+  private clearStoredCooldown(): void {
+    this.cooldownDeadline = 0;
+    try {
+      sessionStorage.removeItem(this.cooldownKey);
+    } catch {
+      // Không cần chặn luồng đăng nhập nếu storage không khả dụng.
+    }
   }
 }

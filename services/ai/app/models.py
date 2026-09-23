@@ -10,6 +10,13 @@ class StartJobRequest(BaseModel):
     alertProfile: str = "DEFAULT"
     callbackUrl: str
     callbackApiKey: str
+    annotatedVideoUpload: "ArtifactUploadTarget | None" = None
+
+class ArtifactUploadTarget(BaseModel):
+    objectKey: str
+    uploadUrl: str
+    fileName: str
+    contentType: str
 
 class StartJobResponse(BaseModel):
     jobId: str
@@ -19,10 +26,19 @@ class StartJobResponse(BaseModel):
 class StopJobResponse(BaseModel):
     jobId: str
     status: str
+    artifact: "ArtifactMetadata | None" = None
+
+class ArtifactMetadata(BaseModel):
+    objectKey: str
+    fileName: str
+    contentType: str
+    sizeBytes: int
+    sha256: str
 
 class CapabilitiesResponse(BaseModel):
     sessionInference: bool
     faceEnrollment: bool
+    annotatedVideoOutput: bool
     loadedModels: list[str]
 
 class FaceEnrollmentManifestImage(BaseModel):

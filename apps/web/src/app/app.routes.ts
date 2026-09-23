@@ -1,8 +1,10 @@
 import { Routes } from '@angular/router';
 import {
+  academicGuard,
   adminGuard,
   authGuard,
   guestGuard,
+  organizationGuard,
 } from './core/auth.guard';
 import { ShellComponent } from './layout/shell.component';
 
@@ -22,6 +24,7 @@ export const routes: Routes = [
     children: [
       {
         path: '',
+        canActivate: [academicGuard],
         loadComponent: () =>
           import('./features/dashboard.component').then(
             (module) => module.DashboardComponent,
@@ -29,6 +32,7 @@ export const routes: Routes = [
       },
       {
         path: 'students',
+        canActivate: [academicGuard],
         loadComponent: () =>
           import('./features/students.component').then(
             (module) => module.StudentsComponent,
@@ -36,6 +40,7 @@ export const routes: Routes = [
       },
       {
         path: 'students/:studentId/face-enrollment',
+        canActivate: [academicGuard],
         loadComponent: () =>
           import(
             './features/face-enrollment.component'
@@ -46,13 +51,20 @@ export const routes: Routes = [
       },
       {
         path: 'management',
+        canActivate: [academicGuard],
         loadComponent: () =>
           import('./features/management.component').then(
             (module) => module.ManagementComponent,
           ),
       },
       {
+        path: 'organization',
+        canActivate: [organizationGuard],
+        loadComponent: () => import('./features/organization.component').then((module) => module.OrganizationComponent),
+      },
+      {
         path: 'videos',
+        canActivate: [academicGuard],
         loadComponent: () =>
           import('./features/videos.component').then(
             (module) => module.VideosComponent,
@@ -60,6 +72,7 @@ export const routes: Routes = [
       },
       {
         path: 'sessions',
+        canActivate: [academicGuard],
         loadComponent: () =>
           import('./features/sessions.component').then(
             (module) => module.SessionsComponent,
@@ -67,6 +80,7 @@ export const routes: Routes = [
       },
       {
         path: 'sessions/:id',
+        canActivate: [academicGuard],
         loadComponent: () =>
           import(
             './features/session-detail.component'
@@ -77,6 +91,7 @@ export const routes: Routes = [
       },
       {
         path: 'alerts',
+        canActivate: [academicGuard],
         loadComponent: () =>
           import('./features/alerts.component').then(
             (module) => module.AlertsComponent,
@@ -84,6 +99,7 @@ export const routes: Routes = [
       },
       {
         path: 'history',
+        canActivate: [academicGuard],
         loadComponent: () =>
           import('./features/history.component').then(
             (module) => module.HistoryComponent,
@@ -91,6 +107,7 @@ export const routes: Routes = [
       },
       {
         path: 'reports',
+        canActivate: [academicGuard],
         loadComponent: () =>
           import('./features/reports.component').then(
             (module) => module.ReportsComponent,
@@ -98,6 +115,7 @@ export const routes: Routes = [
       },
       {
         path: 'search',
+        canActivate: [academicGuard],
         loadComponent: () =>
           import('./features/search.component').then(
             (module) => module.SearchComponent,
@@ -105,6 +123,7 @@ export const routes: Routes = [
       },
       {
         path: 'attendance',
+        canActivate: [academicGuard],
         loadComponent: () =>
           import('./features/policies.component').then(
             (module) => module.PoliciesComponent,

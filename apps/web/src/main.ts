@@ -23,18 +23,14 @@ bootstrapApplication(AppComponent, appConfig).catch(
     description.textContent =
       'Frontend gặp lỗi khi khởi tạo. Hãy xem chi tiết bên dưới.';
 
-    const pre = document.createElement('pre');
-    pre.style.whiteSpace = 'pre-wrap';
-    pre.style.background = '#fee';
-    pre.style.padding = '16px';
-    pre.style.borderRadius = '8px';
+    const notice = document.createElement('p');
+    notice.style.background = '#fee';
+    notice.style.padding = '16px';
+    notice.style.borderRadius = '8px';
+    notice.textContent =
+      'Không thể tải giao diện. Vui lòng tải lại trang hoặc liên hệ quản trị hệ thống.';
 
-    pre.textContent =
-      error instanceof Error
-        ? `${error.name}: ${error.message}\n${error.stack ?? ''}`
-        : String(error);
-
-    main.append(title, description, pre);
+    main.append(title, description, notice);
     document.body.append(main);
   },
 );
