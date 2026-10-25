@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace HTBAM.Api.Support;
 
-public static class AccessScope
+public static partial class AccessScope
 {
     public static async Task<long?> TeacherIdAsync(AppDbContext db, ClaimsPrincipal user, CancellationToken ct)
     {
@@ -31,7 +31,7 @@ public static class AccessScope
             c.Id == classSectionId &&
             (
                 c.TeacherId == teacherId ||
-                db.ManagementAssignmentsSet.Any(a =>
+                ActiveAssignments(db).Any(a =>
                     a.TeacherId == teacherId && a.IsActive &&
                     (
                         (a.PositionType == "DEPARTMENT_HEAD" && a.DepartmentId != null && c.Course.DepartmentId == a.DepartmentId) ||
@@ -41,11 +41,11 @@ public static class AccessScope
             ), ct);
     }
 
-    public static Task<bool> CanManageClassSectionAsync(AppDbContext db, ClaimsPrincipal user, long classSectionId, CancellationToken ct) =>
-        CanViewClassSectionAsync(db, user, classSectionId, ct);
+    public static async Task<bool> CanManageClassSectionAsync(AppDbContext db, ClaimsPrincipal user, long classSectionId, CancellationToken ct) =>
+        (await ClassPermissions(db, user, classSectionId, ct)).CanEditDetails;
 
     public static Task<bool> CanManageRosterAsync(AppDbContext db, ClaimsPrincipal user, long classSectionId, CancellationToken ct) =>
-        CanManageClassSectionAsync(db, user, classSectionId, ct);
+        CanManageClassRosterAsync(db, user, classSectionId, ct);
 
     public static async Task<bool> CanViewStudentAsync(AppDbContext db, ClaimsPrincipal user, long studentId, CancellationToken ct)
     {
@@ -54,10 +54,7 @@ public static class AccessScope
         if (await IsStudentInManagedFacultyAsync(db, teacherId.Value, studentId, ct)) return true;
         var sessionIds = ScopedSessions(db, teacherId.Value).Select(s => s.Id);
         if (await db.SessionStudentsSet.AnyAsync(x => x.StudentId == studentId && sessionIds.Contains(x.SessionId), ct)) return true;
-        return await db.Enrollments.AnyAsync(x => x.StudentId == studentId &&
-            (x.ClassSection.TeacherId == teacherId || db.ManagementAssignmentsSet.Any(a => a.TeacherId == teacherId && a.IsActive &&
-                ((a.PositionType == "DEPARTMENT_HEAD" && a.DepartmentId == x.ClassSection.Course.DepartmentId) ||
-                 (a.PositionType == "FACULTY_HEAD" && a.FacultyId != null && db.DepartmentsSet.Any(d => d.Id == x.ClassSection.Course.DepartmentId && d.FacultyId == a.FacultyId))))), ct);
+        return false;
     }
 
     public static async Task<bool> CanManageStudentAsync(AppDbContext db, ClaimsPrincipal user, long studentId, CancellationToken ct)
@@ -65,10 +62,7 @@ public static class AccessScope
         var teacherId = await TeacherIdAsync(db, user, ct);
         if (teacherId is not > 0) return false;
         if (await IsStudentInManagedFacultyAsync(db, teacherId.Value, studentId, ct)) return true;
-        return await db.Enrollments.AnyAsync(x => x.StudentId == studentId &&
-            (x.ClassSection.TeacherId == teacherId || db.ManagementAssignmentsSet.Any(a => a.TeacherId == teacherId && a.IsActive &&
-                ((a.PositionType == "DEPARTMENT_HEAD" && a.DepartmentId == x.ClassSection.Course.DepartmentId) ||
-                 (a.PositionType == "FACULTY_HEAD" && a.FacultyId != null && db.DepartmentsSet.Any(d => d.Id == x.ClassSection.Course.DepartmentId && d.FacultyId == a.FacultyId))))), ct);
+        return false;
     }
 
     public static async Task<bool> CanManageStudentClassAsync(AppDbContext db, ClaimsPrincipal user, long studentClassId, CancellationToken ct)
@@ -81,7 +75,7 @@ public static class AccessScope
     {
         var teacherId = await TeacherIdAsync(db, user, ct);
         if (teacherId is not > 0) return false;
-        return await db.ManagementAssignmentsSet.AsNoTracking().AnyAsync(a => a.TeacherId == teacherId && a.IsActive &&
+        return await ActiveAssignments(db).AsNoTracking().AnyAsync(a => a.TeacherId == teacherId && a.IsActive &&
             ((a.PositionType == "DEPARTMENT_HEAD" && a.DepartmentId == departmentId) ||
              (a.PositionType == "FACULTY_HEAD" && a.FacultyId != null && db.DepartmentsSet.Any(d => d.Id == departmentId && d.FacultyId == a.FacultyId))), ct);
     }
@@ -120,7 +114,7 @@ public static class AccessScope
         return await db.SessionsSet.AsNoTracking().AnyAsync(s => s.Id == sessionId &&
             (s.OriginalTeacherId == teacherId ||
              (s.OriginalTeacherId == 0 && s.ClassSection.TeacherId == teacherId) ||
-             db.ManagementAssignmentsSet.Any(a => a.TeacherId == teacherId && a.IsActive &&
+             ActiveAssignments(db).Any(a => a.TeacherId == teacherId && a.IsActive &&
                 ((a.PositionType == "DEPARTMENT_HEAD" && a.DepartmentId == s.ClassSection.Course.DepartmentId) ||
                  (a.PositionType == "FACULTY_HEAD" && a.FacultyId != null &&
                     db.DepartmentsSet.Any(d => d.Id == s.ClassSection.Course.DepartmentId && d.FacultyId == a.FacultyId))))), ct);
@@ -139,7 +133,7 @@ public static class AccessScope
 
         var sessionIds = ScopedSessions(db, teacherId.Value).Select(s => s.Id);
         var managedUploaderIds = db.Teachers.Where(t => t.UserId != null &&
-            db.ManagementAssignmentsSet.Any(a => a.TeacherId == teacherId.Value && a.IsActive &&
+            ActiveAssignments(db).Any(a => a.TeacherId == teacherId.Value && a.IsActive &&
                 ((a.PositionType == "DEPARTMENT_HEAD" && a.DepartmentId != null && t.DepartmentId == a.DepartmentId) ||
                  (a.PositionType == "FACULTY_HEAD" && a.FacultyId != null && t.DepartmentId != null &&
                     db.DepartmentsSet.Any(d => d.Id == t.DepartmentId && d.FacultyId == a.FacultyId)))))
@@ -175,7 +169,7 @@ public static class AccessScope
         if (teacherId is not > 0) return false;
         return await db.SessionsSet.AsNoTracking().AnyAsync(s =>
             s.Id == sessionId &&
-            db.ManagementAssignmentsSet.Any(a =>
+            ActiveAssignments(db).Any(a =>
                 a.TeacherId == teacherId && a.IsActive &&
                 (
                     (a.PositionType == "DEPARTMENT_HEAD" && a.DepartmentId != null && s.ClassSection.Course.DepartmentId == a.DepartmentId) ||
@@ -188,7 +182,7 @@ public static class AccessScope
     {
         var teacherId = await TeacherIdAsync(db, user, ct);
         if (teacherId is not > 0) return false;
-        return await db.ManagementAssignmentsSet.AsNoTracking().AnyAsync(a =>
+        return await ActiveAssignments(db).AsNoTracking().AnyAsync(a =>
             a.TeacherId == teacherId && a.IsActive && a.PositionType == "FACULTY_HEAD" && a.FacultyId != null &&
             db.DepartmentsSet.Any(d => d.Id == departmentId && d.FacultyId == a.FacultyId), ct);
     }
@@ -197,7 +191,7 @@ public static class AccessScope
     {
         var teacherId = await TeacherIdAsync(db, user, ct);
         if (teacherId is not > 0) return false;
-        return await db.ManagementAssignmentsSet.AsNoTracking().AnyAsync(a =>
+        return await ActiveAssignments(db).AsNoTracking().AnyAsync(a =>
             a.TeacherId == teacherId && a.IsActive && a.PositionType == "FACULTY_HEAD" && a.FacultyId == facultyId, ct);
     }
 
@@ -207,7 +201,7 @@ public static class AccessScope
         long studentId,
         CancellationToken ct)
     {
-        var managedFacultyIds = db.ManagementAssignmentsSet
+        var managedFacultyIds = ActiveAssignments(db)
             .Where(a =>
                 a.TeacherId == teacherId &&
                 a.IsActive &&
@@ -230,7 +224,7 @@ public static class AccessScope
             db.SessionSubstitutionsSet.Any(sub => sub.SessionId == s.Id &&
                 ((sub.Status == "ACTIVE" && s.Status != "CANCELLED") || sub.Status == "COMPLETED") &&
                 sub.SubstituteTeacherId == teacherId) ||
-            db.ManagementAssignmentsSet.Any(a =>
+            ActiveAssignments(db).Any(a =>
                 a.TeacherId == teacherId && a.IsActive &&
                 (
                     (a.PositionType == "DEPARTMENT_HEAD" && a.DepartmentId != null && s.ClassSection.Course.DepartmentId == a.DepartmentId) ||

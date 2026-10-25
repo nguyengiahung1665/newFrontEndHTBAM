@@ -1,5 +1,12 @@
 # Runbook - HTBAM v3-complete
 
+## Docker và migration hiện tại — 24/10/2026
+
+Quy trình hiện hành và kết quả kiểm thử: [DATABASE_MIGRATION_AND_DEVELOPMENT_SEED.md](DATABASE_MIGRATION_AND_DEVELOPMENT_SEED.md).
+Từ `infra`, chạy `docker compose config --quiet`, `docker compose build backend web`, `docker compose up -d --force-recreate`, `docker compose ps -a`. Dịch vụ migrate/seed tự hoàn tất trước backend và web, giữ volume hiện có. Không chạy lại bộ SQL 003 cũ để seed.
+
+Tài khoản mới có prefix `demo.`; mật khẩu từ `SEED_DEFAULT_PASSWORD`, fallback Development `HTBAM-Local-Demo!2026#`. Tắt dữ liệu phát triển bằng `Seed__Development=false`. Các phần dưới đây mô tả quy trình thủ công cũ; ưu tiên hướng dẫn migration hiện hành ở liên kết trên.
+
 ## A. Lần chạy đầu trên máy của bạn
 
 ### 1. SQL Server

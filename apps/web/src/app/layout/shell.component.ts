@@ -1,8 +1,13 @@
+import { DOCUMENT } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  ElementRef,
+  HostListener,
+  OnDestroy,
   OnInit,
+  ViewChild,
   computed,
   inject,
   signal,
@@ -18,6 +23,8 @@ import {
 import { filter } from 'rxjs';
 import { ApiService } from '../core/api.service';
 import { AuthService } from '../core/auth.service';
+import { OverlayFocus } from '../shared/overlay-focus';
+import { catalogBreadcrumb } from '../shared/catalog-navigation';
 
 interface NavigationItem {
   to: string;
@@ -32,11 +39,15 @@ interface NavigationItem {
   imports: [RouterOutlet, RouterLink, RouterLinkActive],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="shell" [class.collapsed]="collapsed()">
-      <aside class="sidebar" [class.open]="menuOpen()">
+    <div class="shell" [class.collapsed]="collapsed() && !mobile()">
+      <aside #sidebar id="sidebar" class="sidebar" [class.open]="menuOpen()"
+        [attr.role]="menuOpen() ? 'dialog' : null" [attr.aria-modal]="menuOpen() ? 'true' : null"
+        aria-label="Thanh điều hướng HTBAM" tabindex="-1">
         <button
           type="button"
           class="sidebar-collapse"
+          [attr.aria-expanded]="!collapsed()"
+          aria-controls="sidebar-navigation"
           [attr.aria-label]="collapsed() ? 'Mở rộng thanh bên' : 'Thu gọn thanh bên'"
           (click)="collapsed.set(!collapsed())"
         >
@@ -54,9 +65,10 @@ interface NavigationItem {
             <strong>HTBAM</strong>
             <small>Hệ thống theo dõi, phát hiện và đánh giá hành vi sinh viên</small>
           </div>
+          <button type="button" class="drawer-close icon-button" aria-label="Đóng menu" (click)="closeMenu()">×</button>
         </div>
 
-        <nav class="sidebar-nav" aria-label="Điều hướng chính">
+        <nav id="sidebar-navigation" class="sidebar-nav" aria-label="Điều hướng chính">
           <div class="nav-group">
             <p class="nav-heading">Không gian làm việc</p>
             @for (link of workLinks; track link.to) {
@@ -65,8 +77,9 @@ interface NavigationItem {
                 [routerLink]="link.to"
                 routerLinkActive="active"
                 [routerLinkActiveOptions]="{ exact: link.to === '/' }"
-                [title]="collapsed() ? link.label : ''"
-                (click)="menuOpen.set(false)"
+                [title]="link.label"
+                [attr.aria-label]="link.label"
+                (click)="closeMenu()"
               >
                 <span class="nav-icon" aria-hidden="true">
                   @switch (link.icon) {
@@ -91,11 +104,17 @@ interface NavigationItem {
             }
           </div>
 
+          @if (auth.hasPermission('CATALOG_VIEW') || auth.hasPermission('CLASS_SECTION_VIEW')) {
+            <div class="nav-group" aria-label="Danh mục">
+              <p class="nav-heading">Danh mục</p>
+              <a routerLink="/management" routerLinkActive="active" title="Danh mục dữ liệu" (click)="closeMenu()"><span class="nav-icon" aria-hidden="true">▤</span><span class="nav-label">Danh mục dữ liệu</span></a>
+            </div>
+          }
           @if (auth.isAdmin()) {
             <div class="nav-group">
               <p class="nav-heading">Quản trị</p>
               @for (link of adminLinks; track link.to) {
-                <a [routerLink]="link.to" routerLinkActive="active" [title]="collapsed() ? link.label : ''" (click)="menuOpen.set(false)">
+                <a [routerLink]="link.to" routerLinkActive="active" [title]="link.label" [attr.aria-label]="link.label" (click)="closeMenu()">
                   <span class="nav-icon" aria-hidden="true">
                     @if (link.icon === 'shield') {
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>
@@ -124,50 +143,56 @@ interface NavigationItem {
         </div>
       </aside>
 
-      <main class="app-main">
+      <main class="app-main" [attr.inert]="menuOpen() ? '' : null">
         <header class="topbar">
-          <button type="button" class="menu-btn icon-button" aria-label="Mở menu" (click)="menuOpen.set(true)">
+          <button type="button" class="menu-btn icon-button" aria-label="Mở menu" aria-controls="sidebar" [attr.aria-expanded]="menuOpen()" (click)="openMenu()">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
           </button>
           <div class="topbar-copy">
             <p class="topbar-title">Ứng dụng quản lý & phân tích hành vi sinh viên</p>
-            <p class="breadcrumb">Trang chủ / {{ breadcrumb() }}</p>
+            <p class="breadcrumb" [title]="'Trang chủ / ' + breadcrumb()">Trang chủ / {{ breadcrumb() }}</p>
           </div>
           <div class="topbar-actions">
-            <span class="health-inline">
-              <span class="pulse-dot" [style.background]="systemOk() === false ? '#f59e0b' : '#22c55e'"></span>
+            <span class="health-inline" [class.healthy]="systemOk() === true" [class.warning]="systemOk() === false" role="status">
+              <span class="pulse-dot" aria-hidden="true"></span>
               {{ systemOk() === null ? 'Đang kiểm tra' : systemOk() ? 'Hệ thống ổn định' : 'Cần kiểm tra' }}
             </span>
-            <button type="button" class="icon-button" aria-label="Thông báo" title="Thông báo">
+            @if (auth.isLoggedIn() && !auth.isAdmin()) {
+            <a routerLink="/alerts" class="icon-button button-link" aria-label="Cảnh báo" title="Cảnh báo">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg>
-            </button>
+            </a>
+            }
             <div class="avatar" [title]="auth.user().fullName || ''">{{ initials() }}</div>
           </div>
         </header>
-        <section class="content"><router-outlet /></section>
+        <section class="content">@if (developmentWarning()) { <p class="notice warning" role="status">{{ developmentWarning() }}. Các mục DEMO và kết quả tổng hợp giả lập chỉ dùng để kiểm thử.</p> }<router-outlet /></section>
       </main>
 
       @if (menuOpen()) {
-        <div class="overlay" role="button" tabindex="0" aria-label="Đóng menu" (click)="menuOpen.set(false)"></div>
+        <div class="overlay" aria-hidden="true" (click)="closeMenu()"></div>
       }
     </div>
   `,
 })
-export class ShellComponent implements OnInit {
+export class ShellComponent implements OnInit, OnDestroy {
   readonly auth = inject(AuthService);
   private readonly api = inject(ApiService);
   private readonly router = inject(Router);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly document = inject(DOCUMENT);
+  private readonly drawerFocus = new OverlayFocus(this.document);
+  @ViewChild('sidebar') private sidebar?: ElementRef<HTMLElement>;
 
+  readonly mobile = signal(this.document.defaultView?.matchMedia('(max-width: 1023px)').matches ?? false);
   readonly menuOpen = signal(false);
   readonly collapsed = signal(false);
   readonly systemOk = signal<boolean | null>(null);
+  readonly developmentWarning = signal<string | null>(null);
   readonly breadcrumb = signal('Tổng quan');
 
   readonly workLinks: NavigationItem[] = [
     { to: '/', label: 'Tổng quan', icon: 'grid' },
     { to: '/students', label: 'Sinh viên', icon: 'users' },
-    { to: '/management', label: 'Danh mục', icon: 'book' },
     { to: '/organization', label: 'Cơ cấu & phân quyền', icon: 'shield' },
     { to: '/videos', label: 'Dữ liệu video', icon: 'video' },
     { to: '/sessions', label: 'Buổi học', icon: 'calendar' },
@@ -181,6 +206,7 @@ export class ShellComponent implements OnInit {
   ];
 
   readonly adminLinks: NavigationItem[] = [
+    { to: '/academic-configuration', label: 'Cấu hình học vụ', icon: 'calendar' },
     { to: '/admin/users', label: 'Người dùng & phân quyền', icon: 'shield' },
     { to: '/admin/audit-logs', label: 'Nhật ký hệ thống', icon: 'log' },
   ];
@@ -190,13 +216,8 @@ export class ShellComponent implements OnInit {
     return name.split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]?.toUpperCase()).join('');
   });
 
-  readonly roleLabel = computed(() => {
-    const roles = this.auth.user().roles ?? [];
-    if (roles.includes('ADMIN')) return 'Quản trị viên';
-    if (roles.includes('LECTURER')) return 'Giảng viên';
-    if (roles.includes('TECH_AI')) return 'Kỹ thuật AI';
-    return roles.join(', ') || 'Người dùng';
-  });
+  readonly roleLabel = this.auth.positionLabel;
+  private profileTimer?: ReturnType<typeof setInterval>;
 
   canSeeWorkLink(
     link: NavigationItem,
@@ -208,13 +229,17 @@ export class ShellComponent implements OnInit {
     if (this.auth.isAdmin()) {
       return (
         link.to === '/system' ||
-        link.to === '/account'
+        link.to === '/account' ||
+        link.to === '/organization' ||
+        link.to === '/management'
       );
     }
 
-    if (
-      link.to === '/organization'
-    ) {
+    if (link.to === '/students') return this.auth.hasPermission('STUDENT_GLOBAL_VIEW');
+    if (link.to === '/class-sections') return this.auth.hasPermission('CLASS_SECTION_VIEW');
+    if (link.to === '/management') return this.auth.hasPermission('CATALOG_VIEW');
+
+    if (link.to === '/organization') {
       return this.auth
         .canManageStructure();
     }
@@ -229,18 +254,56 @@ export class ShellComponent implements OnInit {
         filter((event): event is NavigationEnd => event instanceof NavigationEnd),
         takeUntilDestroyed(this.destroyRef),
       )
-      .subscribe((event) => this.updateBreadcrumb(event.urlAfterRedirects));
+      .subscribe((event) => {
+        this.closeMenu();
+        this.updateBreadcrumb(event.urlAfterRedirects);
+      });
+  }
+
+  openMenu(): void {
+    if (!this.mobile() || !this.sidebar) return;
+    this.menuOpen.set(true);
+    this.drawerFocus.open(this.sidebar.nativeElement, () => this.closeMenu());
+  }
+
+  closeMenu(): void {
+    this.menuOpen.set(false);
+    this.drawerFocus.close();
+  }
+
+  @HostListener('window:resize')
+  onResize(): void {
+    const mobile = this.document.defaultView?.matchMedia('(max-width: 1023px)').matches ?? false;
+    if (mobile !== this.mobile()) {
+      this.closeMenu();
+      this.mobile.set(mobile);
+    }
+  }
+
+  ngOnDestroy(): void {
+    this.drawerFocus.close(false);
+    clearInterval(this.profileTimer);
+  }
+
+  @HostListener('window:focus')
+  refreshProfile(): void {
+    if (this.auth.isLoggedIn()) this.auth.ensureProfile(true).subscribe({ error: () => undefined });
   }
 
   ngOnInit(): void {
+    this.profileTimer = setInterval(() => {
+      if (this.document.visibilityState === 'visible') this.refreshProfile();
+    }, 30000);
     this.api.capabilities().subscribe({
-      next: (capabilities) => this.systemOk.set(capabilities.backend && capabilities.database),
+      next: (capabilities) => { this.systemOk.set(capabilities.backend && capabilities.database); this.developmentWarning.set(capabilities.developmentDataWarning ?? null); },
       error: () => this.systemOk.set(false),
     });
   }
 
   private updateBreadcrumb(url: string): void {
     const path = url.split('?')[0];
+    const catalog = catalogBreadcrumb(url);
+    if(catalog){this.breadcrumb.set(catalog);return;}
     const allLinks = [...this.workLinks, ...this.adminLinks];
     const exact = allLinks.find((item) => item.to === path);
     if (exact) {

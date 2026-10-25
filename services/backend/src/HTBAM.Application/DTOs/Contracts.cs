@@ -2,7 +2,7 @@ namespace HTBAM.Application.DTOs;
 public record LoginRequest(string UserName,string Password);
 public record LoginResponse(string AccessToken,DateTime ExpiresAt,long UserId,string FullName,string[] Roles,int TokenVersion);
 public record StudentDto(long Id,string StudentCode,string FullName,string Email,long? StudentClassId,string AnonymousCode,bool IsActive);
-public record UpsertStudentRequest(string StudentCode,string FullName,string Email,long? StudentClassId,string AnonymousCode,bool IsActive=true);
+public record UpsertStudentRequest(string StudentCode,string FullName,string Email,long? StudentClassId,string? AnonymousCode=null,bool IsActive=true);
 public record CreateSessionRequest(long ClassSectionId,long? RoomId,long? CameraId,long? VideoId,long AttendancePolicyId,DateTime ScheduledStart,DateTime? ScheduledEnd,long[] StudentIds,string AlertProfile="DEFAULT");
 public record SessionDto(long Id,long ClassSectionId,DateTime ScheduledStart,DateTime? ScheduledEnd,DateTime? StartedAt,DateTime? EndedAt,string Status,long? CameraId,long? VideoId,long AttendancePolicyId);
 public record AiArtifactUploadTarget(string ObjectKey,string UploadUrl,string FileName,string ContentType);

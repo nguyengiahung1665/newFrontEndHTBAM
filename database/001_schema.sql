@@ -1,5 +1,5 @@
-/* HTBAM Web System v3 - Fresh schema for SQL Server
-   If you have never run v1/v2, run 001 -> 002 -> 003(optional). Do NOT run legacy/004.
+/* HTBAM Web System v3 - Idempotent base schema for SQL Server
+   Canonical source: database/sqlserver. Existing tables and records are preserved.
 */
 SET QUOTED_IDENTIFIER ON;
 SET ANSI_NULLS ON;
@@ -11,13 +11,17 @@ SET NUMERIC_ROUNDABORT OFF;
 SET XACT_ABORT ON;
 GO
 
-IF OBJECT_ID('dbo.Roles','U') IS NOT NULL THROW 50001, 'Database is not empty. Use a clean HTBAM database for 001_schema.sql.', 1;
-GO
 
+IF OBJECT_ID('dbo.Roles','U') IS NULL
+BEGIN
 CREATE TABLE Roles(
  Id bigint IDENTITY PRIMARY KEY,
  Name nvarchar(64) NOT NULL UNIQUE
 );
+END;
+GO
+IF OBJECT_ID('dbo.Users','U') IS NULL
+BEGIN
 CREATE TABLE Users(
  Id bigint IDENTITY PRIMARY KEY,
  UserName nvarchar(128) NOT NULL UNIQUE,
@@ -30,7 +34,12 @@ CREATE TABLE Users(
  LastLoginAt datetime2 NULL,
  CONSTRAINT CK_Users_Status CHECK(Status IN('ACTIVE','LOCKED','INACTIVE'))
 );
-CREATE UNIQUE INDEX UX_Users_Email_NotEmpty ON Users(Email) WHERE Email <> '';
+END;
+GO
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='UX_Users_Email_NotEmpty' AND object_id=OBJECT_ID('dbo.Users'))
+ CREATE UNIQUE INDEX UX_Users_Email_NotEmpty ON Users(Email) WHERE Email <> '';
+IF OBJECT_ID('dbo.UserRoles','U') IS NULL
+BEGIN
 CREATE TABLE UserRoles(
  UserId bigint NOT NULL,
  RoleId bigint NOT NULL,
@@ -38,7 +47,11 @@ CREATE TABLE UserRoles(
  CONSTRAINT FK_UserRoles_User FOREIGN KEY(UserId) REFERENCES Users(Id),
  CONSTRAINT FK_UserRoles_Role FOREIGN KEY(RoleId) REFERENCES Roles(Id)
 );
+END;
+GO
 
+IF OBJECT_ID('dbo.Faculties','U') IS NULL
+BEGIN
 CREATE TABLE Faculties(
  Id bigint IDENTITY PRIMARY KEY,
  Code nvarchar(64) NOT NULL UNIQUE,
@@ -46,6 +59,10 @@ CREATE TABLE Faculties(
  Note nvarchar(max) NULL,
  IsActive bit NOT NULL DEFAULT 1
 );
+END;
+GO
+IF OBJECT_ID('dbo.Departments','U') IS NULL
+BEGIN
 CREATE TABLE Departments(
  Id bigint IDENTITY PRIMARY KEY,
  Code nvarchar(64) NOT NULL UNIQUE,
@@ -55,6 +72,10 @@ CREATE TABLE Departments(
  IsActive bit NOT NULL DEFAULT 1,
  CONSTRAINT FK_Department_Faculty FOREIGN KEY(FacultyId) REFERENCES Faculties(Id)
 );
+END;
+GO
+IF OBJECT_ID('dbo.StudentClasses','U') IS NULL
+BEGIN
 CREATE TABLE StudentClasses(
  Id bigint IDENTITY PRIMARY KEY,
  Code nvarchar(64) NOT NULL UNIQUE,
@@ -65,6 +86,10 @@ CREATE TABLE StudentClasses(
  IsActive bit NOT NULL DEFAULT 1,
  CONSTRAINT FK_StudentClass_Faculty FOREIGN KEY(FacultyId) REFERENCES Faculties(Id)
 );
+END;
+GO
+IF OBJECT_ID('dbo.Students','U') IS NULL
+BEGIN
 CREATE TABLE Students(
  Id bigint IDENTITY PRIMARY KEY,
  StudentCode nvarchar(64) NOT NULL UNIQUE,
@@ -76,7 +101,12 @@ CREATE TABLE Students(
  CreatedAt datetime2 NOT NULL DEFAULT SYSUTCDATETIME(),
  CONSTRAINT FK_Student_Class FOREIGN KEY(StudentClassId) REFERENCES StudentClasses(Id)
 );
-CREATE UNIQUE INDEX UX_Students_Email_NotEmpty ON Students(Email) WHERE Email <> '';
+END;
+GO
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='UX_Students_Email_NotEmpty' AND object_id=OBJECT_ID('dbo.Students'))
+ CREATE UNIQUE INDEX UX_Students_Email_NotEmpty ON Students(Email) WHERE Email <> '';
+IF OBJECT_ID('dbo.Teachers','U') IS NULL
+BEGIN
 CREATE TABLE Teachers(
  Id bigint IDENTITY PRIMARY KEY,
  TeacherCode nvarchar(64) NOT NULL UNIQUE,
@@ -89,7 +119,12 @@ CREATE TABLE Teachers(
  CONSTRAINT FK_Teacher_User FOREIGN KEY(UserId) REFERENCES Users(Id),
  CONSTRAINT FK_Teacher_Department FOREIGN KEY(DepartmentId) REFERENCES Departments(Id)
 );
-CREATE UNIQUE INDEX UX_Teacher_User_NotNull ON Teachers(UserId) WHERE UserId IS NOT NULL;
+END;
+GO
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='UX_Teacher_User_NotNull' AND object_id=OBJECT_ID('dbo.Teachers'))
+ CREATE UNIQUE INDEX UX_Teacher_User_NotNull ON Teachers(UserId) WHERE UserId IS NOT NULL;
+IF OBJECT_ID('dbo.ManagementAssignments','U') IS NULL
+BEGIN
 CREATE TABLE ManagementAssignments(
  Id bigint IDENTITY PRIMARY KEY,
  TeacherId bigint NOT NULL,
@@ -111,8 +146,14 @@ CREATE TABLE ManagementAssignments(
  CONSTRAINT CK_Mgmt_Position CHECK(PositionType IN('FACULTY_HEAD','DEPARTMENT_HEAD')),
  CONSTRAINT CK_Mgmt_Scope CHECK((PositionType='FACULTY_HEAD' AND FacultyId IS NOT NULL AND DepartmentId IS NULL) OR (PositionType='DEPARTMENT_HEAD' AND DepartmentId IS NOT NULL))
 );
-CREATE UNIQUE INDEX UX_Mgmt_Active_FacultyHead ON ManagementAssignments(FacultyId) WHERE IsActive = 1 AND PositionType = 'FACULTY_HEAD' AND FacultyId IS NOT NULL;
-CREATE UNIQUE INDEX UX_Mgmt_Active_DepartmentHead ON ManagementAssignments(DepartmentId) WHERE IsActive = 1 AND PositionType = 'DEPARTMENT_HEAD' AND DepartmentId IS NOT NULL;
+END;
+GO
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='UX_Mgmt_Active_FacultyHead' AND object_id=OBJECT_ID('dbo.ManagementAssignments'))
+ CREATE UNIQUE INDEX UX_Mgmt_Active_FacultyHead ON ManagementAssignments(FacultyId) WHERE IsActive = 1 AND PositionType = 'FACULTY_HEAD' AND FacultyId IS NOT NULL;
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='UX_Mgmt_Active_DepartmentHead' AND object_id=OBJECT_ID('dbo.ManagementAssignments'))
+ CREATE UNIQUE INDEX UX_Mgmt_Active_DepartmentHead ON ManagementAssignments(DepartmentId) WHERE IsActive = 1 AND PositionType = 'DEPARTMENT_HEAD' AND DepartmentId IS NOT NULL;
+IF OBJECT_ID('dbo.Courses','U') IS NULL
+BEGIN
 CREATE TABLE Courses(
  Id bigint IDENTITY PRIMARY KEY,
  Code nvarchar(64) NOT NULL UNIQUE,
@@ -124,6 +165,10 @@ CREATE TABLE Courses(
  CONSTRAINT FK_Course_Department FOREIGN KEY(DepartmentId) REFERENCES Departments(Id),
  CONSTRAINT CK_Course_Credits CHECK(Credits BETWEEN 1 AND 20)
 );
+END;
+GO
+IF OBJECT_ID('dbo.ClassSections','U') IS NULL
+BEGIN
 CREATE TABLE ClassSections(
  Id bigint IDENTITY PRIMARY KEY,
  Code nvarchar(64) NOT NULL UNIQUE,
@@ -140,6 +185,10 @@ CREATE TABLE ClassSections(
  CONSTRAINT FK_ClassSection_Course FOREIGN KEY(CourseId) REFERENCES Courses(Id),
  CONSTRAINT FK_ClassSection_Teacher FOREIGN KEY(TeacherId) REFERENCES Teachers(Id)
 );
+END;
+GO
+IF OBJECT_ID('dbo.Enrollments','U') IS NULL
+BEGIN
 CREATE TABLE Enrollments(
  ClassSectionId bigint NOT NULL,
  StudentId bigint NOT NULL,
@@ -148,6 +197,10 @@ CREATE TABLE Enrollments(
  CONSTRAINT FK_Enrollment_Class FOREIGN KEY(ClassSectionId) REFERENCES ClassSections(Id),
  CONSTRAINT FK_Enrollment_Student FOREIGN KEY(StudentId) REFERENCES Students(Id)
 );
+END;
+GO
+IF OBJECT_ID('dbo.Rooms','U') IS NULL
+BEGIN
 CREATE TABLE Rooms(
  Id bigint IDENTITY PRIMARY KEY,
  Code nvarchar(64) NOT NULL UNIQUE,
@@ -158,6 +211,10 @@ CREATE TABLE Rooms(
  IsActive bit NOT NULL DEFAULT 1,
  CONSTRAINT CK_Room_Capacity CHECK(Capacity >= 0)
 );
+END;
+GO
+IF OBJECT_ID('dbo.Cameras','U') IS NULL
+BEGIN
 CREATE TABLE Cameras(
  Id bigint IDENTITY PRIMARY KEY,
  Code nvarchar(64) NOT NULL UNIQUE,
@@ -172,7 +229,11 @@ CREATE TABLE Cameras(
  CONSTRAINT FK_Camera_Room FOREIGN KEY(RoomId) REFERENCES Rooms(Id),
  CONSTRAINT CK_Camera_Status CHECK(Status IN('ONLINE','OFFLINE','ERROR','UNKNOWN'))
 );
+END;
+GO
 
+IF OBJECT_ID('dbo.FaceEnrollments','U') IS NULL
+BEGIN
 CREATE TABLE FaceEnrollments(
  Id bigint IDENTITY PRIMARY KEY,
  StudentId bigint NOT NULL,
@@ -187,6 +248,10 @@ CREATE TABLE FaceEnrollments(
  CONSTRAINT FK_FaceEnrollment_Student FOREIGN KEY(StudentId) REFERENCES Students(Id),
  CONSTRAINT CK_FaceEnrollment_Status CHECK(Status IN('IN_PROGRESS','NEEDS_RETAKE','PENDING_AI','PROCESSING','READY','FAILED','CANCELLED'))
 );
+END;
+GO
+IF OBJECT_ID('dbo.StudentFaceImages','U') IS NULL
+BEGIN
 CREATE TABLE StudentFaceImages(
  Id bigint IDENTITY PRIMARY KEY,
  FaceEnrollmentId bigint NOT NULL,
@@ -210,6 +275,10 @@ CREATE TABLE StudentFaceImages(
  CONSTRAINT CK_FaceImage_Source CHECK(SourceType IN('UPLOAD','CAMERA')),
  CONSTRAINT CK_FaceImage_Quality CHECK(QualityStatus IN('PENDING','PASS','RETAKE','REJECTED'))
 );
+END;
+GO
+IF OBJECT_ID('dbo.StudentFaceTemplates','U') IS NULL
+BEGIN
 CREATE TABLE StudentFaceTemplates(
  Id bigint IDENTITY PRIMARY KEY,
  StudentId bigint NOT NULL,
@@ -227,7 +296,11 @@ CREATE TABLE StudentFaceTemplates(
  CONSTRAINT FK_FaceTemplate_Student FOREIGN KEY(StudentId) REFERENCES Students(Id),
  CONSTRAINT FK_FaceTemplate_Enrollment FOREIGN KEY(FaceEnrollmentId) REFERENCES FaceEnrollments(Id)
 );
+END;
+GO
 
+IF OBJECT_ID('dbo.Videos','U') IS NULL
+BEGIN
 CREATE TABLE Videos(
  Id bigint IDENTITY PRIMARY KEY,
  FileName nvarchar(256) NOT NULL,
@@ -248,6 +321,10 @@ CREATE TABLE Videos(
  CONSTRAINT CK_Video_Type CHECK(VideoType IN('INPUT_UPLOAD','ANNOTATED_OUTPUT')),
  CONSTRAINT CK_Video_Classification CHECK((VideoType='INPUT_UPLOAD' AND IsSystemGenerated=0 AND SessionId IS NULL AND ParentVideoId IS NULL) OR (VideoType='ANNOTATED_OUTPUT' AND IsSystemGenerated=1 AND SessionId IS NOT NULL))
 );
+END;
+GO
+IF OBJECT_ID('dbo.AttendancePolicies','U') IS NULL
+BEGIN
 CREATE TABLE AttendancePolicies(
  Id bigint IDENTITY PRIMARY KEY,
  Code nvarchar(64) NOT NULL UNIQUE,
@@ -261,6 +338,10 @@ CREATE TABLE AttendancePolicies(
  IsActive bit NOT NULL DEFAULT 1,
  CONSTRAINT CK_AttPolicy_Thresholds CHECK(PresentThreshold BETWEEN 0 AND 1 AND PartialThreshold BETWEEN 0 AND 1 AND PresentThreshold >= PartialThreshold)
 );
+END;
+GO
+IF OBJECT_ID('dbo.Sessions','U') IS NULL
+BEGIN
 CREATE TABLE Sessions(
  Id bigint IDENTITY PRIMARY KEY,
  ClassSectionId bigint NOT NULL,
@@ -287,8 +368,14 @@ CREATE TABLE Sessions(
  CONSTRAINT CK_Session_Source CHECK((CameraId IS NOT NULL AND VideoId IS NULL) OR (CameraId IS NULL AND VideoId IS NOT NULL)),
  CONSTRAINT CK_Session_Status CHECK(Status IN('DRAFT','READY','STARTING','RUNNING','FINALIZING','FINALIZE_FAILED','COMPLETED','CANCELLED'))
 );
+END;
+GO
+IF NOT EXISTS(SELECT 1 FROM sys.foreign_keys WHERE name='FK_Video_Session')
 ALTER TABLE Videos ADD CONSTRAINT FK_Video_Session FOREIGN KEY(SessionId) REFERENCES Sessions(Id);
-CREATE UNIQUE INDEX UX_Videos_Annotated_Session ON Videos(SessionId,VideoType) WHERE VideoType='ANNOTATED_OUTPUT' AND SessionId IS NOT NULL AND Status<>'DELETED';
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='UX_Videos_Annotated_Session' AND object_id=OBJECT_ID('dbo.Videos'))
+ CREATE UNIQUE INDEX UX_Videos_Annotated_Session ON Videos(SessionId,VideoType) WHERE VideoType='ANNOTATED_OUTPUT' AND SessionId IS NOT NULL AND Status<>'DELETED';
+IF OBJECT_ID('dbo.SessionSubstitutions','U') IS NULL
+BEGIN
 CREATE TABLE SessionSubstitutions(
  Id bigint IDENTITY PRIMARY KEY,
  SessionId bigint NOT NULL,
@@ -310,7 +397,12 @@ CREATE TABLE SessionSubstitutions(
  CONSTRAINT CK_Sub_Status CHECK(Status IN('ACTIVE','CANCELLED','COMPLETED')),
  CONSTRAINT CK_Sub_DifferentTeacher CHECK(OriginalTeacherId <> SubstituteTeacherId)
 );
-CREATE UNIQUE INDEX UX_Sub_Active_Session ON SessionSubstitutions(SessionId) WHERE Status = 'ACTIVE';
+END;
+GO
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='UX_Sub_Active_Session' AND object_id=OBJECT_ID('dbo.SessionSubstitutions'))
+ CREATE UNIQUE INDEX UX_Sub_Active_Session ON SessionSubstitutions(SessionId) WHERE Status = 'ACTIVE';
+IF OBJECT_ID('dbo.SessionStudents','U') IS NULL
+BEGIN
 CREATE TABLE SessionStudents(
  SessionId bigint NOT NULL,
  StudentId bigint NOT NULL,
@@ -318,6 +410,10 @@ CREATE TABLE SessionStudents(
  CONSTRAINT FK_SS_Session FOREIGN KEY(SessionId) REFERENCES Sessions(Id),
  CONSTRAINT FK_SS_Student FOREIGN KEY(StudentId) REFERENCES Students(Id)
 );
+END;
+GO
+IF OBJECT_ID('dbo.AnalysisJobs','U') IS NULL
+BEGIN
 CREATE TABLE AnalysisJobs(
  Id bigint IDENTITY PRIMARY KEY,
  SessionId bigint NOT NULL,
@@ -331,7 +427,11 @@ CREATE TABLE AnalysisJobs(
  ErrorMessage nvarchar(1000) NULL,
  CONSTRAINT FK_Job_Session FOREIGN KEY(SessionId) REFERENCES Sessions(Id)
 );
+END;
+GO
 
+IF OBJECT_ID('dbo.StableIdentities','U') IS NULL
+BEGIN
 CREATE TABLE StableIdentities(
  Id bigint IDENTITY PRIMARY KEY,
  SessionId bigint NOT NULL,
@@ -353,6 +453,10 @@ CREATE TABLE StableIdentities(
  CONSTRAINT CK_Stable_State CHECK(State IN('ACTIVE','LOST','CLOSED')),
  CONSTRAINT CK_Stable_IdentityStatus CHECK(IdentityStatus IN('UNKNOWN','IDENTIFIED','CONFLICT'))
 );
+END;
+GO
+IF OBJECT_ID('dbo.TrackSegments','U') IS NULL
+BEGIN
 CREATE TABLE TrackSegments(
  Id bigint IDENTITY PRIMARY KEY,
  StableIdentityId bigint NOT NULL,
@@ -363,6 +467,10 @@ CREATE TABLE TrackSegments(
  ObservationCount int NOT NULL DEFAULT 1,
  CONSTRAINT FK_Track_Stable FOREIGN KEY(StableIdentityId) REFERENCES StableIdentities(Id)
 );
+END;
+GO
+IF OBJECT_ID('dbo.IdentityLinks','U') IS NULL
+BEGIN
 CREATE TABLE IdentityLinks(
  Id bigint IDENTITY PRIMARY KEY,
  StableIdentityId bigint NOT NULL,
@@ -376,6 +484,10 @@ CREATE TABLE IdentityLinks(
  CONSTRAINT FK_IdentityLink_Stable FOREIGN KEY(StableIdentityId) REFERENCES StableIdentities(Id),
  CONSTRAINT FK_IdentityLink_Student FOREIGN KEY(StudentId) REFERENCES Students(Id)
 );
+END;
+GO
+IF OBJECT_ID('dbo.AiEventReceipts','U') IS NULL
+BEGIN
 CREATE TABLE AiEventReceipts(
  Id bigint IDENTITY PRIMARY KEY,
  ExternalEventId nvarchar(128) NOT NULL UNIQUE,
@@ -385,6 +497,10 @@ CREATE TABLE AiEventReceipts(
  ReceivedAt datetime2 NOT NULL DEFAULT SYSUTCDATETIME(),
  CONSTRAINT FK_AiReceipt_Session FOREIGN KEY(SessionId) REFERENCES Sessions(Id)
 );
+END;
+GO
+IF OBJECT_ID('dbo.BehaviorEvents','U') IS NULL
+BEGIN
 CREATE TABLE BehaviorEvents(
  Id bigint IDENTITY PRIMARY KEY,
  ExternalEventId nvarchar(128) NOT NULL UNIQUE,
@@ -403,6 +519,10 @@ CREATE TABLE BehaviorEvents(
  CONSTRAINT FK_BE_Student FOREIGN KEY(StudentId) REFERENCES Students(Id),
  CONSTRAINT CK_BE_Label CHECK(Label IN('FOCUSED','DISTRACTED','SLEEPY','ACTIVE','PHONE_USE','OUT_OF_VIEW'))
 );
+END;
+GO
+IF OBJECT_ID('dbo.AlertRules','U') IS NULL
+BEGIN
 CREATE TABLE AlertRules(
  Id bigint IDENTITY PRIMARY KEY,
  Code nvarchar(64) NOT NULL UNIQUE,
@@ -414,6 +534,10 @@ CREATE TABLE AlertRules(
  Enabled bit NOT NULL DEFAULT 1,
  Version nvarchar(32) NOT NULL
 );
+END;
+GO
+IF OBJECT_ID('dbo.Alerts','U') IS NULL
+BEGIN
 CREATE TABLE Alerts(
  Id bigint IDENTITY PRIMARY KEY,
  ExternalEventId nvarchar(128) NOT NULL UNIQUE,
@@ -437,6 +561,10 @@ CREATE TABLE Alerts(
  CONSTRAINT FK_Alert_Student FOREIGN KEY(StudentId) REFERENCES Students(Id),
  CONSTRAINT CK_Alert_Status CHECK(Status IN('OPEN','ACK','CLOSED'))
 );
+END;
+GO
+IF OBJECT_ID('dbo.Attendance','U') IS NULL
+BEGIN
 CREATE TABLE Attendance(
  Id bigint IDENTITY PRIMARY KEY,
  SessionId bigint NOT NULL,
@@ -452,6 +580,10 @@ CREATE TABLE Attendance(
  CONSTRAINT FK_Att_Session FOREIGN KEY(SessionId) REFERENCES Sessions(Id),
  CONSTRAINT FK_Att_Student FOREIGN KEY(StudentId) REFERENCES Students(Id)
 );
+END;
+GO
+IF OBJECT_ID('dbo.StudentSessionSummaries','U') IS NULL
+BEGIN
 CREATE TABLE StudentSessionSummaries(
  Id bigint IDENTITY PRIMARY KEY,
  SessionId bigint NOT NULL,
@@ -470,6 +602,10 @@ CREATE TABLE StudentSessionSummaries(
  CONSTRAINT FK_SSum_Session FOREIGN KEY(SessionId) REFERENCES Sessions(Id),
  CONSTRAINT FK_SSum_Student FOREIGN KEY(StudentId) REFERENCES Students(Id)
 );
+END;
+GO
+IF OBJECT_ID('dbo.ClassSessionSummaries','U') IS NULL
+BEGIN
 CREATE TABLE ClassSessionSummaries(
  Id bigint IDENTITY PRIMARY KEY,
  SessionId bigint NOT NULL UNIQUE,
@@ -485,6 +621,10 @@ CREATE TABLE ClassSessionSummaries(
  AutoCommentGeneratedAt datetime2 NULL,
  CONSTRAINT FK_CSum_Session FOREIGN KEY(SessionId) REFERENCES Sessions(Id)
 );
+END;
+GO
+IF OBJECT_ID('dbo.AuditLogs','U') IS NULL
+BEGIN
 CREATE TABLE AuditLogs(
  Id bigint IDENTITY PRIMARY KEY,
  UserId bigint NULL,
@@ -496,28 +636,52 @@ CREATE TABLE AuditLogs(
  CreatedAt datetime2 NOT NULL DEFAULT SYSUTCDATETIME(),
  CONSTRAINT FK_Audit_User FOREIGN KEY(UserId) REFERENCES Users(Id)
 );
+END;
+GO
 GO
 
-CREATE INDEX IX_Students_Class_Active ON Students(StudentClassId,IsActive,StudentCode);
-CREATE INDEX IX_ClassSections_Teacher ON ClassSections(TeacherId,IsActive,Semester);
-CREATE INDEX IX_Mgmt_Teacher_Active ON ManagementAssignments(TeacherId,IsActive,PositionType);
-CREATE INDEX IX_Enrollments_Student ON Enrollments(StudentId,ClassSectionId);
-CREATE INDEX IX_FaceEnrollments_Student_Status ON FaceEnrollments(StudentId,Status,StartedAt DESC);
-CREATE INDEX IX_FaceImages_Enrollment ON StudentFaceImages(FaceEnrollmentId,IsActive,CapturePose);
-CREATE INDEX IX_FaceImages_Student_Hash ON StudentFaceImages(StudentId,Sha256,IsActive);
-CREATE INDEX IX_FaceTemplates_Student_Active ON StudentFaceTemplates(StudentId,IsActive,CreatedAt DESC);
-CREATE INDEX IX_Videos_Hash ON Videos(Sha256,Status);
-CREATE INDEX IX_Videos_Type_Session ON Videos(VideoType,SessionId,Status);
-CREATE INDEX IX_Sessions_Class_Time ON Sessions(ClassSectionId,ScheduledStart DESC);
-CREATE INDEX IX_Sessions_OriginalTeacher_Time ON Sessions(OriginalTeacherId,ScheduledStart DESC);
-CREATE INDEX IX_Substitute_Teacher_Status ON SessionSubstitutions(SubstituteTeacherId,Status,AssignedAt DESC);
-CREATE INDEX IX_Sessions_Camera_Time ON Sessions(CameraId,ScheduledStart,ScheduledEnd);
-CREATE INDEX IX_Stable_Session_State ON StableIdentities(SessionId,State,LastSeenAt DESC);
-CREATE INDEX IX_Stable_Session_Student ON StableIdentities(SessionId,StudentId,State);
-CREATE INDEX IX_Track_Stable_Time ON TrackSegments(StableIdentityId,StartedAt,EndedAt);
-CREATE INDEX IX_Behavior_Session_Student_Time ON BehaviorEvents(SessionId,StudentId,StartedAt);
-CREATE INDEX IX_Behavior_Label_Time ON BehaviorEvents(Label,StartedAt);
-CREATE INDEX IX_Alerts_Session_Status_Time ON Alerts(SessionId,Status,CreatedAt DESC);
-CREATE INDEX IX_AiReceipts_Session_Time ON AiEventReceipts(SessionId,ReceivedAt DESC);
-CREATE INDEX IX_Audit_User_Time ON AuditLogs(UserId,CreatedAt DESC);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_Students_Class_Active' AND object_id=OBJECT_ID('dbo.Students'))
+ CREATE INDEX IX_Students_Class_Active ON Students(StudentClassId,IsActive,StudentCode);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_ClassSections_Teacher' AND object_id=OBJECT_ID('dbo.ClassSections'))
+ CREATE INDEX IX_ClassSections_Teacher ON ClassSections(TeacherId,IsActive,Semester);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_Mgmt_Teacher_Active' AND object_id=OBJECT_ID('dbo.ManagementAssignments'))
+ CREATE INDEX IX_Mgmt_Teacher_Active ON ManagementAssignments(TeacherId,IsActive,PositionType);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_Enrollments_Student' AND object_id=OBJECT_ID('dbo.Enrollments'))
+ CREATE INDEX IX_Enrollments_Student ON Enrollments(StudentId,ClassSectionId);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_FaceEnrollments_Student_Status' AND object_id=OBJECT_ID('dbo.FaceEnrollments'))
+ CREATE INDEX IX_FaceEnrollments_Student_Status ON FaceEnrollments(StudentId,Status,StartedAt DESC);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_FaceImages_Enrollment' AND object_id=OBJECT_ID('dbo.StudentFaceImages'))
+ CREATE INDEX IX_FaceImages_Enrollment ON StudentFaceImages(FaceEnrollmentId,IsActive,CapturePose);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_FaceImages_Student_Hash' AND object_id=OBJECT_ID('dbo.StudentFaceImages'))
+ CREATE INDEX IX_FaceImages_Student_Hash ON StudentFaceImages(StudentId,Sha256,IsActive);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_FaceTemplates_Student_Active' AND object_id=OBJECT_ID('dbo.StudentFaceTemplates'))
+ CREATE INDEX IX_FaceTemplates_Student_Active ON StudentFaceTemplates(StudentId,IsActive,CreatedAt DESC);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_Videos_Hash' AND object_id=OBJECT_ID('dbo.Videos'))
+ CREATE INDEX IX_Videos_Hash ON Videos(Sha256,Status);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_Videos_Type_Session' AND object_id=OBJECT_ID('dbo.Videos'))
+ CREATE INDEX IX_Videos_Type_Session ON Videos(VideoType,SessionId,Status);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_Sessions_Class_Time' AND object_id=OBJECT_ID('dbo.Sessions'))
+ CREATE INDEX IX_Sessions_Class_Time ON Sessions(ClassSectionId,ScheduledStart DESC);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_Sessions_OriginalTeacher_Time' AND object_id=OBJECT_ID('dbo.Sessions'))
+ CREATE INDEX IX_Sessions_OriginalTeacher_Time ON Sessions(OriginalTeacherId,ScheduledStart DESC);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_Substitute_Teacher_Status' AND object_id=OBJECT_ID('dbo.SessionSubstitutions'))
+ CREATE INDEX IX_Substitute_Teacher_Status ON SessionSubstitutions(SubstituteTeacherId,Status,AssignedAt DESC);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_Sessions_Camera_Time' AND object_id=OBJECT_ID('dbo.Sessions'))
+ CREATE INDEX IX_Sessions_Camera_Time ON Sessions(CameraId,ScheduledStart,ScheduledEnd);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_Stable_Session_State' AND object_id=OBJECT_ID('dbo.StableIdentities'))
+ CREATE INDEX IX_Stable_Session_State ON StableIdentities(SessionId,State,LastSeenAt DESC);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_Stable_Session_Student' AND object_id=OBJECT_ID('dbo.StableIdentities'))
+ CREATE INDEX IX_Stable_Session_Student ON StableIdentities(SessionId,StudentId,State);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_Track_Stable_Time' AND object_id=OBJECT_ID('dbo.TrackSegments'))
+ CREATE INDEX IX_Track_Stable_Time ON TrackSegments(StableIdentityId,StartedAt,EndedAt);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_Behavior_Session_Student_Time' AND object_id=OBJECT_ID('dbo.BehaviorEvents'))
+ CREATE INDEX IX_Behavior_Session_Student_Time ON BehaviorEvents(SessionId,StudentId,StartedAt);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_Behavior_Label_Time' AND object_id=OBJECT_ID('dbo.BehaviorEvents'))
+ CREATE INDEX IX_Behavior_Label_Time ON BehaviorEvents(Label,StartedAt);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_Alerts_Session_Status_Time' AND object_id=OBJECT_ID('dbo.Alerts'))
+ CREATE INDEX IX_Alerts_Session_Status_Time ON Alerts(SessionId,Status,CreatedAt DESC);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_AiReceipts_Session_Time' AND object_id=OBJECT_ID('dbo.AiEventReceipts'))
+ CREATE INDEX IX_AiReceipts_Session_Time ON AiEventReceipts(SessionId,ReceivedAt DESC);
+IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_Audit_User_Time' AND object_id=OBJECT_ID('dbo.AuditLogs'))
+ CREATE INDEX IX_Audit_User_Time ON AuditLogs(UserId,CreatedAt DESC);
 GO

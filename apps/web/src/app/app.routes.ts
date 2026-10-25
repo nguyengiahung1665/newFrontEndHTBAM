@@ -5,6 +5,9 @@ import {
   authGuard,
   guestGuard,
   organizationGuard,
+  studentManagementGuard,
+  catalogGuard,
+  classSectionsGuard,
 } from './core/auth.guard';
 import { ShellComponent } from './layout/shell.component';
 
@@ -32,7 +35,7 @@ export const routes: Routes = [
       },
       {
         path: 'students',
-        canActivate: [academicGuard],
+        canActivate: [studentManagementGuard],
         loadComponent: () =>
           import('./features/students.component').then(
             (module) => module.StudentsComponent,
@@ -40,7 +43,7 @@ export const routes: Routes = [
       },
       {
         path: 'students/:studentId/face-enrollment',
-        canActivate: [academicGuard],
+        canActivate: [studentManagementGuard],
         loadComponent: () =>
           import(
             './features/face-enrollment.component'
@@ -51,11 +54,22 @@ export const routes: Routes = [
       },
       {
         path: 'management',
-        canActivate: [academicGuard],
+        canActivate: [catalogGuard],
+        runGuardsAndResolvers: 'paramsOrQueryParamsChange',
         loadComponent: () =>
           import('./features/management.component').then(
             (module) => module.ManagementComponent,
           ),
+      },
+      {
+        path: 'class-sections',
+        canActivate: [classSectionsGuard],
+        loadComponent: () => import('./features/management.component').then(m => m.ManagementComponent),
+      },
+      {
+        path: 'academic-configuration',
+        canActivate: [adminGuard],
+        loadComponent: () => import('./features/academic-configuration.component').then(m => m.AcademicConfigurationComponent),
       },
       {
         path: 'organization',
