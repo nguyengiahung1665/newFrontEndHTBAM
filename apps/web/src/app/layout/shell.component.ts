@@ -1,3 +1,4 @@
+import { NotificationCenterComponent } from '../shared/notification-center.component';
 import { DOCUMENT } from '@angular/common';
 import {
   ChangeDetectionStrategy,
@@ -36,7 +37,7 @@ interface NavigationItem {
 @Component({
   selector: 'app-shell',
   standalone: true,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, NotificationCenterComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="shell" [class.collapsed]="collapsed() && !mobile()">
@@ -55,15 +56,9 @@ interface NavigationItem {
         </button>
 
         <div class="sidebar-header">
-          <div class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3">
-              <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
-          </div>
+          <img class="huit-logo" src="assets/huit-logo.png" width="52" height="52" alt="Logo Trường Đại học Công Thương Thành phố Hồ Chí Minh" title="HTBAM - Khoa Công nghệ Thông tin HUIT" />
           <div class="brand-copy">
-            <strong>HTBAM</strong>
-            <small>Hệ thống theo dõi, phát hiện và đánh giá hành vi sinh viên</small>
+            <strong>Hệ thống theo dõi và phân tích hành vi sinh viên</strong>
           </div>
           <button type="button" class="drawer-close icon-button" aria-label="Đóng menu" (click)="closeMenu()">×</button>
         </div>
@@ -157,15 +152,11 @@ interface NavigationItem {
               <span class="pulse-dot" aria-hidden="true"></span>
               {{ systemOk() === null ? 'Đang kiểm tra' : systemOk() ? 'Hệ thống ổn định' : 'Cần kiểm tra' }}
             </span>
-            @if (auth.isLoggedIn() && !auth.isAdmin()) {
-            <a routerLink="/alerts" class="icon-button button-link" aria-label="Cảnh báo" title="Cảnh báo">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg>
-            </a>
-            }
+            <app-notification-center [demo]="!!developmentWarning()" />
             <div class="avatar" [title]="auth.user().fullName || ''">{{ initials() }}</div>
           </div>
         </header>
-        <section class="content">@if (developmentWarning()) { <p class="notice warning" role="status">{{ developmentWarning() }}. Các mục DEMO và kết quả tổng hợp giả lập chỉ dùng để kiểm thử.</p> }<router-outlet /></section>
+        <section class="content"><router-outlet /></section>
       </main>
 
       @if (menuOpen()) {

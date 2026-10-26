@@ -4,16 +4,18 @@ const {test} = require('node:test');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const ts = require('../apps/web/node_modules/typescript');
-const signal = value => {const fn = () => value; fn.set = next => value = next; return fn;};
+const signal = value => {const fn = () => value; fn.set = next => value = next; fn.update = change => value = change(value); return fn;};
 function load(file, api = {}) {
   const core = {Component:()=>target=>target,Input:()=>()=>{},Output:()=>()=>{},ViewChild:()=>()=>{},HostListener:()=>()=>{},forwardRef:fn=>fn,ChangeDetectionStrategy:{OnPush:0},signal,computed:fn=>fn,inject:()=>api,EventEmitter:class{emit(){}}};
   const rx=require('../apps/web/node_modules/rxjs');
   // RxJS checks plain-object prototypes; normalize dictionaries crossing this VM boundary.
   const modules = {'@angular/core':core,'rxjs':{...rx,forkJoin:input=>rx.forkJoin(Array.isArray(input)?input:Object.fromEntries(Object.entries(input)))},'@angular/core/rxjs-interop':{takeUntilDestroyed:()=>source=>source},'../shared/ui':new Proxy({errorText:e=>String(e?.message??e),apiFieldErrors:()=>({}),statusText:v=>v},{get:(target,key)=>target[key]??class{}})};
   if(file.endsWith('management.component.ts'))modules['../shared/catalog-navigation']=load('apps/web/src/app/shared/catalog-navigation.ts');
+  if(file.endsWith('date-input.component.ts'))modules['./date-only']=load('apps/web/src/app/shared/date-only.ts');
+  if(file.endsWith('management.component.ts'))modules['../shared/date-only']=load('apps/web/src/app/shared/date-only.ts');
   const source = fs.readFileSync(file,'utf8');
   const code = ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,experimentalDecorators:true}}).outputText;
-  const context = {exports:{},require:name=>modules[name]??new Proxy({}, {get:()=>class{}}),crypto:require('node:crypto').webcrypto,Date,Intl,Set,File,URLSearchParams,console,setTimeout,clearTimeout};
+  const context = {exports:{},require:name=>modules[name]??new Proxy({}, {get:()=>class{}}),crypto:require('node:crypto').webcrypto,Date,Intl,Set,File,URLSearchParams,console,setTimeout,clearTimeout,localStorage:api.storage};
   vm.runInNewContext(code,context); return context.exports;
 }
 test('Vietnamese date control validates leap years and emits ISO without locale-dependent display',()=>{
@@ -134,20 +136,21 @@ test('class sections is embedded in catalog tabs without separate header or side
 });
 
 function access(permissions,admin=false,roles=['LECTURER']){return{hasPermission:p=>permissions.includes(p),isAdmin:()=>admin,user:()=>({roles})};}
-test('teacher preview uses the department sequence, blocks legacy departments and ignores stale responses',()=>{
-  const requests=[];const env={...access(['TEACHER_CREATE']),nextTeacherCode:id=>({subscribe:callbacks=>{const request={id,callbacks,closed:false};requests.push(request);return{unsubscribe(){request.closed=true;}};}})};
-  const {ManagementComponent}=load('apps/web/src/app/features/management.component.ts',env);const c=new ManagementComponent();c.tab.set('teachers');c.form={fullName:'Teacher',email:'teacher@example.invalid',userId:91};c.refs.departments=[{id:1,code:'BM-CNPM'},{id:2,code:'bm0001'},{id:3,code:'BM-ATTT'}];
-  c.teacherDepartmentChanged(1);assert.equal(c.form.userId,null);c.teacherDepartmentChanged(3);assert.equal(requests[0].closed,true);requests[0].callbacks.next({code:'GV-CNPM-0003'});assert.equal(c.codePreview(),'');requests[1].callbacks.next({code:'GV-ATTT-0001'});assert.equal(c.codePreview(),'GV-ATTT-0001');
-  c.teacherDepartmentChanged(2);assert.match(c.departmentCodeError(),/trước khi thêm giảng viên/);assert.match(c.validateCatalog(),/mã hợp lệ/);assert.equal(requests.length,2);
-});
-test('teacher save omits all client code fields and the new row immediately uses the backend teacher code',()=>{
+test('teacher form validates department without requesting or displaying a preview code',()=>{
+   let requests=0;const env={...access(['TEACHER_CREATE']),nextTeacherCode:()=>{requests++;throw Error('No previews');}};
+   const {ManagementComponent}=load('apps/web/src/app/features/management.component.ts',env);const c=new ManagementComponent();c.tab.set('teachers');c.form={fullName:'Teacher',email:'t@example.invalid',userId:91};c.refs.departments=[{id:1,code:'BM-CNDL'},{id:2,code:'bm0001'}];
+   c.teacherDepartmentChanged(1);assert.equal(c.form.userId,null);assert.equal(c.departmentCodeError(),'');assert.equal(requests,0);
+   c.teacherDepartmentChanged(2);assert.match(c.validateCatalog(),/mã hợp lệ/);assert.equal(requests,0);
+ });
+
+ test('teacher save omits all client code fields and the new row immediately uses the backend teacher code',()=>{
   let payload,callback;const env={...access(['TEACHER_CREATE']),saveCatalog:(resource,id,body)=>{payload=body;return{subscribe:c=>callback=c};}};
   const {ManagementComponent}=load('apps/web/src/app/features/management.component.ts',env);const c=new ManagementComponent();c.tab.set('teachers');c.loadAll=()=>{};c.form={code:'FORGED',teacherCode:'GV-HEAD',fullName:'Teacher',email:'teacher@example.invalid',departmentId:1};c.managementSearch='old';c.editorOpen.set(true);c.saveCatalog();
   assert.equal('code' in payload,false);assert.equal('teacherCode' in payload,false);callback.next({id:44,teacherCode:'GV-CNPM-0003',fullName:'Teacher'});assert.equal(c.editorOpen(),false);assert.equal(c.managementSearch,'');assert.equal(c.visibleData()[0].teacherCode,'GV-CNPM-0003');
 });
 test('administrator never gets teacher creation even with a stale permission and editing keeps the existing code',()=>{
   const {ManagementComponent}=load('apps/web/src/app/features/management.component.ts',access(['TEACHER_CREATE','DEPARTMENT_DATA_MANAGE'],true,['ADMIN']));const c=new ManagementComponent();c.tab.set('teachers');assert.equal(c.canCreateTab(),false);
-  c.editingId.set(7);c.originalTeacherDepartmentId=1;c.form={teacherCode:'GV-CNPM-0001',departmentId:1};c.teacherDepartmentChanged(2);assert.equal(c.form.teacherCode,'GV-CNPM-0001');assert.equal(c.form.departmentId,2);assert.equal(c.originalTeacherDepartmentId,1);assert.equal(c.codePreview(),'');
+  c.editingId.set(7);c.originalTeacherDepartmentId=1;c.form={teacherCode:'GV-CNPM-0001',departmentId:1};c.teacherDepartmentChanged(2);assert.equal(c.form.teacherCode,'GV-CNPM-0001');assert.equal(c.form.departmentId,2);assert.equal(c.originalTeacherDepartmentId,1);assert.equal('codePreview' in c,false);
 });
 test('catalog actions are inside shared section headers below tabs and descriptions follow the selected tab',()=>{
   const source=fs.readFileSync('apps/web/src/app/features/management.component.ts','utf8');const top=source.slice(source.indexOf('<app-page-title'),source.indexOf('class="tabs catalog-tabs"'));assert.equal(top.includes('(click)="openEditor()"'),false);
@@ -160,17 +163,15 @@ test('catalog tabs do not fetch unauthorized unrelated student data or show a sp
   for(const key of ['faculties','departments','studentClasses','courses','teachers','rooms','cameras'])env[key]=()=>of([]);
   const {ManagementComponent}=load('apps/web/src/app/features/management.component.ts',env);const c=new ManagementComponent();c.tab.set('rooms');c.loadAll();assert.equal(studentRequests,0);assert.equal(c.refErrorList().length,0);assert.equal(c.error(),'');
 });
-test('course catalog preview follows department, ignores stale responses and blocks legacy codes',()=>{
-  const requests=[];const env={...access(['CATALOG_VIEW','DEPARTMENT_DATA_MANAGE']),nextCourseCode:id=>({subscribe:callbacks=>{const request={id,callbacks,closed:false};requests.push(request);return{unsubscribe(){request.closed=true;}};}})};
-  const {ManagementComponent}=load('apps/web/src/app/features/management.component.ts',env);const c=new ManagementComponent();c.tab.set('courses');c.form={name:'Course',credits:3};
-  c.refs.departments=[{id:1,code:'BM-CNDL'},{id:2,code:'bm0001'},{id:3,code:'BM-ATTT'}];
-  c.courseDepartmentChanged(1);assert.equal(c.codePreviewLoading(),true);c.courseDepartmentChanged(3);assert.equal(requests[0].closed,true);
-  requests[0].callbacks.next({code:'MH-CNDL-001'});assert.equal(c.codePreview(),'');requests[1].callbacks.next({code:'MH-ATTT-001'});assert.equal(c.codePreview(),'MH-ATTT-001');
-  c.courseDepartmentChanged(2);assert.match(c.departmentCodeError(),/chuẩn hóa mã bộ môn/);assert.match(c.validateCatalog(),/chuẩn hóa mã bộ môn/);assert.equal(requests.length,2);
-});
-test('catalog save strips client codes, clears hiding filter and immediately uses backend response',()=>{
+test('course form validates department without exposing a preview code',()=>{
+   const {ManagementComponent}=load('apps/web/src/app/features/management.component.ts',access(['CATALOG_VIEW','DEPARTMENT_DATA_MANAGE']));const c=new ManagementComponent();c.tab.set('courses');c.form={name:'Course',credits:3,startAcademicYear:'2026-2027',startSemester:'HK1'};
+   c.refs.departments=[{id:1,code:'BM-CNDL'},{id:2,code:'bm0001'}];c.courseDepartmentChanged(1);assert.equal(c.departmentCodeError(),'');assert.equal(c.validateCatalog(),null);
+   c.courseDepartmentChanged(2);assert.match(c.validateCatalog(),/chuẩn hóa mã bộ môn/);assert.equal('codePreview' in c,false);
+ });
+
+ test('catalog save strips client codes, clears hiding filter and immediately uses backend response',()=>{
   let sent,callback;const env={...access(['CATALOG_VIEW','DEPARTMENT_DATA_MANAGE']),saveCatalog:(...args)=>{sent=args;return{subscribe:c=>callback=c};}};
-  const {ManagementComponent}=load('apps/web/src/app/features/management.component.ts',env);const c=new ManagementComponent();c.canCreateTab=()=>true;c.loadAll=()=>{};c.tab.set('courses');c.editorOpen.set(true);c.managementSearch='old filter';c.form={code:'FORGED',name:'Môn mới',departmentId:1,credits:3,isActive:true};
+  const {ManagementComponent}=load('apps/web/src/app/features/management.component.ts',env);const c=new ManagementComponent();c.canCreateTab=()=>true;c.loadAll=()=>{};c.tab.set('courses');c.editorOpen.set(true);c.managementSearch='old filter';c.form={code:'FORGED',name:'Môn mới',departmentId:1,credits:3,isActive:true,startAcademicYear:'2026-2027',startSemester:'1'};
   c.saveCatalog();assert.equal('code' in sent[2],false);callback.next({id:77,code:'MH-CNDL-001',name:'Môn mới',departmentId:1,credits:3});
   assert.equal(c.editorOpen(),false);assert.equal(c.managementSearch,'');assert.equal(c.visibleData()[0].code,'MH-CNDL-001');
 });
@@ -208,4 +209,31 @@ test('tab changes update query state and browser history selects embedded conten
   c.refs.courses=[{id:77,code:'MH-CNPM-001'}];c.refs.departments=[{id:88,code:'BM-CNPM'}];c.data.set(c.refs.departments);
   params.next(new Map([['tab','courses']]));assert.equal(c.tab(),'courses');assert.equal(loads,2);assert.equal(c.data()[0].code,'MH-CNPM-001','tab changes replace stale rows immediately while a refresh is pending');
   c.selectTab('unknown');assert.equal(visits.length,1);
+});
+
+test('date-only parsing accepts short dates, normalizes on blur, enforces ranges and optional clearing',()=>{
+  const {DateInputComponent,parseVietnameseDate}=load('apps/web/src/app/shared/date-input.component.ts');
+  assert.equal(parseVietnameseDate('1/2/2026'),'2026-02-01');
+  for(const value of ['31/02/2026','32/01/2026','00/12/2026','10/25/2026','1-2-2026','29/02/2100'])assert.equal(parseVietnameseDate(value),null);
+  assert.equal(parseVietnameseDate('29/02/2000'),'2000-02-29');
+  const c=new DateInputComponent();let value;c.registerOnChange(v=>value=v);c.input({target:{value:'1/2/2026'}});c.blur();assert.equal(value,'2026-02-01');assert.equal(c.display,'01/02/2026');
+  c.min='2026-02-02';assert.ok(c.validate({}));assert.match(c.validationMessage,/02\/02\/2026/);
+  c.input({target:{value:''}});assert.equal(c.validate({}),null);c.required=true;assert.ok(c.validate({}));
+});
+test('subject year/semester validation, normalization and search include the department and start period',()=>{
+  const {ManagementComponent}=load('apps/web/src/app/features/management.component.ts',access(['CATALOG_VIEW','DEPARTMENT_DATA_MANAGE']));const c=new ManagementComponent();c.tab.set('courses');c.form={name:'Môn mới',credits:3,departmentId:1,startAcademicYear:' 2026 – 2027 ',startSemester:'1'};
+  c.normalizePeriod();assert.equal(c.form.startAcademicYear,'2026-2027');assert.equal(c.form.startSemester,'HK1');assert.equal(c.validateCatalog(),null);
+  c.form.startAcademicYear='2026-2028';assert.match(c.validateCatalog(),/hai năm phải liên tiếp/);c.form.startAcademicYear='2026-2027';c.form.startSemester='HK3';assert.match(c.validateCatalog(),/HK1 hoặc HK2/);
+  c.refs.departments=[{id:1,name:'Công nghệ dữ liệu'}];c.data.set([{name:'Môn mới',departmentId:1,startAcademicYear:'2026-2027',startSemester:'HK2'}]);
+  for(const query of ['2026-2027','HK2','Công nghệ dữ liệu']){c.managementSearch=query;assert.equal(c.visibleData().length,1);}
+});
+
+test('demo notification has one stable identity, persists read state per user and disappears for real data',()=>{
+  const saved=new Map();const storage={getItem:key=>saved.get(key)??null,setItem:(key,value)=>saved.set(key,value)};
+  const env={storage,user:()=>({id:7,userName:'seven'}),hasPermission:()=>true};
+  const {NotificationCenterComponent}=load('apps/web/src/app/shared/notification-center.component.ts',env);
+  const first=new NotificationCenterComponent();first.demo=true;first.ngOnChanges();assert.equal(first.notices().length,1);assert.equal(first.unreadCount(),1);const timestamp=first.notices()[0].createdAt;first.markAll();assert.equal(first.unreadCount(),0);
+  const second=new NotificationCenterComponent();second.demo=true;second.ngOnChanges();assert.equal(second.notices().length,1);assert.equal(second.unreadCount(),0);assert.equal(second.notices()[0].createdAt,timestamp);
+  env.user=()=>({id:8,userName:'eight'});const another=new NotificationCenterComponent();another.demo=true;another.ngOnChanges();assert.equal(another.unreadCount(),1);
+  second.demo=false;second.ngOnChanges();assert.equal(second.notices().length,0);
 });

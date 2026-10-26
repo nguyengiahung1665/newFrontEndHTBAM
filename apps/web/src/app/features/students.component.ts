@@ -28,6 +28,7 @@ import {
   ModalComponent,
   PageTitleComponent,
   RowActionMenuComponent,
+  displayBusinessCode,
   apiFieldErrors,
   errorText,
 } from '../shared/ui';
@@ -189,7 +190,7 @@ import {
                       '—'
                   }}
                 </td>
-                <td><code>{{ student.anonymousCode }}</code>@if(student.sourceAnonymousCode){<small>Mã nguồn: {{student.sourceAnonymousCode}}</small>}</td>
+                <td><code>{{ codeLabel(student.anonymousCode) }}</code>@if(student.sourceAnonymousCode){<small>Mã nguồn: {{codeLabel(student.sourceAnonymousCode)}}</small>}</td>
                 <td>
                   <span
                     class="badge"
@@ -295,6 +296,7 @@ import {
           @if (studentFormError()) {
             <div class="error-box span2">{{ studentFormError() }}</div>
           }
+          @if(!editingStudentId()){
           <label>
             MSSV *
             <input
@@ -316,6 +318,7 @@ import {
               <small class="field-error">{{ studentFieldErrors()['studentCode'] }}</small>
             }
           </label>
+          }
 
           <label>
             Họ tên *
@@ -352,28 +355,6 @@ import {
             <app-search-select resource="student-classes" label="Lớp sinh hoạt" formControlName="studentClassId" />
           </label>
 
-          <label>
-            Mã ẩn danh nội bộ
-            <input
-              formControlName="anonymousCode"
-              readonly placeholder="Tự động tạo khi lưu"
-              (input)="clearStudentFieldError('anonymousCode')"
-            />
-
-            @if (
-              form.controls.anonymousCode.touched &&
-              form.controls.anonymousCode.hasError(
-                'required'
-              )
-            ) {
-              <small class="field-error">
-                Mã ẩn danh là bắt buộc.
-              </small>
-            }
-            @if (studentFieldErrors()['anonymousCode']) {
-              <small class="field-error">{{ studentFieldErrors()['anonymousCode'] }}</small>
-            }
-          </label>
 
           <label class="check">
             <input
@@ -494,6 +475,7 @@ import {
 export class StudentsComponent
   implements OnInit
 {
+  readonly codeLabel = displayBusinessCode;
   private readonly api = inject(ApiService);
 
   readonly auth = inject(AuthService);
@@ -560,8 +542,6 @@ export class StudentsComponent
         null,
       ),
 
-    anonymousCode:
-      this.fb.nonNullable.control(''),
 
     isActive:
       this.fb.nonNullable.control(true),
@@ -626,7 +606,6 @@ export class StudentsComponent
       fullName: '',
       email: '',
       studentClassId: null,
-      anonymousCode: '',
       isActive: true,
     });
 
@@ -663,8 +642,6 @@ export class StudentsComponent
         student.studentClassId ??
         null,
 
-      anonymousCode:
-        student.anonymousCode,
 
       isActive:
         student.isActive,
@@ -722,8 +699,6 @@ export class StudentsComponent
       studentClassId:
         raw.studentClassId,
 
-      anonymousCode:
-        raw.anonymousCode.trim(),
 
       isActive:
         raw.isActive,

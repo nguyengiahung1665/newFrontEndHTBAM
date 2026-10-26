@@ -31,7 +31,6 @@ import { ModalComponent, PageTitleComponent, RowActionMenuComponent, apiFieldErr
       <app-modal [title]="editingId() ? 'Chỉnh sửa chính sách chuyên cần' : 'Thêm chính sách chuyên cần'" [busy]="saving()" size="lg" (close)="closeModal()">
         <form class="form-grid" (ngSubmit)="save()">
           @if (formError()) { <div class="error-box span2">{{ formError() }}</div> }
-          <label>Mã nội bộ<input [value]="form.code || 'Tự động tạo khi lưu'" readonly />@if(fieldErrors()['code']){<small class="field-error">{{fieldErrors()['code']}}</small>}</label>
           <label><span>Tên <span class="required">*</span></span><input name="name" [(ngModel)]="form.name" /></label>
           <label><span>Ngưỡng có mặt <span class="required">*</span></span><input name="presentThreshold" type="number" min="0" max="1" step="0.01" [(ngModel)]="form.presentThreshold" /></label>
           <label><span>Ngưỡng một phần <span class="required">*</span></span><input name="partialThreshold" type="number" min="0" max="1" step="0.01" [(ngModel)]="form.partialThreshold" /></label>
@@ -60,7 +59,7 @@ export class PoliciesComponent implements OnInit {
   canManage():boolean{return this.auth.hasPermission('ATTENDANCE_POLICY_MANAGE')}
   load():void{this.api.policies().subscribe({next:items=>this.items.set(items),error:error=>this.error.set(errorText(error))})}
   startAdd():void{this.editingId.set(null);this.form=this.emptyForm();this.formError.set('');this.fieldErrors.set({});this.modalOpen.set(true)}
-  startEdit(policy:AttendancePolicy):void{this.editingId.set(policy.id);this.form={code:policy.code,name:policy.name,presentThreshold:policy.presentThreshold,partialThreshold:policy.partialThreshold,presentScore:policy.presentScore,partialScore:policy.partialScore,absentScore:policy.absentScore,version:policy.version,isActive:policy.isActive};this.formError.set('');this.fieldErrors.set({});this.modalOpen.set(true)}
+  startEdit(policy:AttendancePolicy):void{this.editingId.set(policy.id);this.form={name:policy.name,presentThreshold:policy.presentThreshold,partialThreshold:policy.partialThreshold,presentScore:policy.presentScore,partialScore:policy.partialScore,absentScore:policy.absentScore,version:policy.version,isActive:policy.isActive};this.formError.set('');this.fieldErrors.set({});this.modalOpen.set(true)}
   closeModal():void{if(!this.saving())this.modalOpen.set(false)}
   save():void{if(!this.form.name.trim()||!this.form.version.trim()){this.formError.set('Vui lòng điền đầy đủ các trường bắt buộc.');return}if(this.form.presentThreshold<0||this.form.presentThreshold>1||this.form.partialThreshold<0||this.form.partialThreshold>1||this.form.presentThreshold<this.form.partialThreshold){this.formError.set('Ngưỡng chuyên cần phải từ 0 đến 1 và ngưỡng có mặt không nhỏ hơn ngưỡng một phần.');return}this.saving.set(true);this.formError.set('');this.fieldErrors.set({});this.api.savePolicy(this.editingId(),this.form).subscribe({next:()=>{this.saving.set(false);this.modalOpen.set(false);this.message.set('Đã lưu chính sách chuyên cần.');this.load()},error:error=>{this.saving.set(false);this.fieldErrors.set(apiFieldErrors(error));this.formError.set(errorText(error))}})}
   clearFieldError(field:string):void{this.fieldErrors.update(errors=>{if(!errors[field])return errors;const next={...errors};delete next[field];return next})}
@@ -68,5 +67,5 @@ export class PoliciesComponent implements OnInit {
   cancelDeactivate():void{if(!this.saving())this.pendingDeactivate.set(null)}
   confirmDeactivate():void{const policy=this.pendingDeactivate();if(!policy)return;this.saving.set(true);this.error.set('');this.api.deactivatePolicy(policy.id).subscribe({next:()=>{this.saving.set(false);this.pendingDeactivate.set(null);this.message.set('Đã ngừng hoạt động chính sách.');this.load()},error:error=>{this.saving.set(false);this.error.set(errorText(error))}})}
   reactivate(policy:AttendancePolicy):void{this.saving.set(true);this.error.set('');this.api.reactivatePolicy(policy.id).subscribe({next:()=>{this.saving.set(false);this.message.set('Đã kích hoạt lại chính sách.');this.load()},error:error=>{this.saving.set(false);this.error.set(errorText(error))}})}
-  private emptyForm(){return{code:'',name:'',presentThreshold:.8,partialThreshold:.5,presentScore:10,partialScore:5,absentScore:0,version:'v1',isActive:true}}
+  private emptyForm(){return{name:'',presentThreshold:.8,partialThreshold:.5,presentScore:10,partialScore:5,absentScore:0,version:'v1',isActive:true}}
 }

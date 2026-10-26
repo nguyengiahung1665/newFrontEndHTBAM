@@ -18,14 +18,19 @@ public sealed class ApiExceptionMiddleware(RequestDelegate next, ILogger<ApiExce
         catch (DbUpdateConcurrencyException ex) { await Write(context, 409, "CONCURRENCY_CONFLICT", "Dữ liệu vừa được thay đổi bởi thao tác khác. Hãy tải lại và thử lại."); logger.LogWarning(ex, "Concurrency conflict"); }
         catch (DbUpdateException ex) { await Write(context, 409, "DATA_CONFLICT", "Không thể lưu thay đổi vì dữ liệu đã được cập nhật hoặc đang được sử dụng. Vui lòng tải lại và thử lại."); logger.LogWarning(ex, "Database conflict"); }
         catch (AiServiceUnavailableException ex) { await Write(context, 503, "AI_SERVICE_UNAVAILABLE", ex.Message); }
-        catch (InvalidOperationException ex) { await Write(context, 409, "INVALID_STATE", ex.Message); }
-        catch (ArgumentException ex) { await Write(context, 400, "BAD_REQUEST", ex.Message); }
+        catch (InvalidOperationException ex) { logger.LogWarning(ex, "Invalid operation"); await Write(context, 409, "INVALID_STATE", UserMessage(ex.Message)); }
+        catch (ArgumentException ex) { await Write(context, 400, "BAD_REQUEST", UserMessage(ex.Message)); }
         catch (Exception ex)
         {
             logger.LogError(ex, "Unhandled API exception");
             await Write(context, 500, "INTERNAL_ERROR", "Có lỗi nội bộ. Vui lòng kiểm tra log máy chủ.");
         }
     }
+
+    private static string UserMessage(string message) => message.Length <= 500 &&
+        System.Text.RegularExpressions.Regex.IsMatch(message, "[À-ỹ]") &&
+        !System.Text.RegularExpressions.Regex.IsMatch(message, @"exception|stack\s*trace|connection\s*string|password\s*=|server\s*=|\bat\s+[\w.]+\(", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+        ? message : "Không thể xử lý dữ liệu trong thao tác này. Vui lòng tải lại trang và kiểm tra các trường bắt buộc; nếu lỗi tiếp diễn, liên hệ quản trị viên kèm mã theo dõi.";
 
     private static async Task Write(HttpContext context, int status, string code, string message)
     {

@@ -89,7 +89,8 @@ public sealed class ClassSectionImportSqlTests
             }, CancellationToken.None);
         }));
         Assert.Equal(24, codes.Distinct().Count());
-        Assert.Contains($"LHP-2627-HK1-{courseCode}-01", codes); Assert.Contains($"LHP-2627-HK1-{courseCode}-02", codes); Assert.Contains($"LHP-2627-HK1-{courseCode}-24", codes);
+        var shortCode = courseCode.StartsWith("MH-") ? courseCode[3..] : courseCode;
+        Assert.Contains($"LHP-2627-HK1-{shortCode}-01", codes); Assert.Contains($"LHP-2627-HK1-{shortCode}-02", codes); Assert.Contains($"LHP-2627-HK1-{shortCode}-24", codes);
         await using var verify = database.Context();
         Assert.Equal(24, (await verify.ClassSectionCounters.SingleAsync(x => x.CourseId == courseId)).LastNumber);
     }

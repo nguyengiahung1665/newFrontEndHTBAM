@@ -1,22 +1,20 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../core/auth.service';
 import { errorText } from '../shared/ui';
 
 @Component({
   standalone: true,
-  imports: [ReactiveFormsModule],
+  imports: [ReactiveFormsModule, RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="login-page">
       <section class="login-visual" aria-label="Giới thiệu HTBAM">
-        <div class="login-brand">
-          <div class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-          </div>
+        <a class="login-brand" routerLink="/" title="HTBAM - Khoa Công nghệ Thông tin HUIT">
+          <img class="huit-logo" src="assets/huit-logo.png" width="52" height="52" alt="Logo Trường Đại học Công Thương Thành phố Hồ Chí Minh" />
           <div><strong>HTBAM</strong><small>Khoa Công nghệ Thông tin</small></div>
-        </div>
+        </a>
 
         <div class="login-illustration" aria-hidden="true">
           <svg viewBox="0 0 520 360" fill="none">
@@ -46,9 +44,10 @@ import { errorText } from '../shared/ui';
 
       <main class="login-form-panel">
         <div class="login-wrap">
-          <div class="login-mobile-brand login-brand">
-            <div class="brand-mark">H</div><div><strong style="color:#0f172a">HTBAM</strong><small>Khoa Công nghệ Thông tin</small></div>
-          </div>
+          <a class="login-mobile-brand login-brand compact-brand" routerLink="/" title="HTBAM - Khoa Công nghệ Thông tin HUIT">
+            <img src="assets/huit-logo.png" alt="Logo HUIT" class="compact-brand__logo" width="26" height="26" />
+            <span class="compact-brand__copy"><strong class="compact-brand__name">HTBAM</strong><small>Khoa Công nghệ Thông tin</small></span>
+          </a>
 
           <form class="login-card" [formGroup]="form" (ngSubmit)="submit()" novalidate>
             <div>
