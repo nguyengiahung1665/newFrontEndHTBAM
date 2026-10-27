@@ -1,3 +1,8 @@
+import { formatDateOnly } from './date-only';
+export function displayBusinessCode(code: string | null | undefined): string {
+  if (!code) return '—';
+  return /[a-f0-9]{32}|[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}/i.test(code) ? 'Mã cũ' : code;
+}
 import { DOCUMENT } from '@angular/common';
 import {
   AfterViewInit,
@@ -13,6 +18,7 @@ import {
   inject,
 } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { OverlayFocus } from './overlay-focus';
 
 @Component({
   selector: 'app-page-title',
@@ -103,7 +109,7 @@ export class BackButtonComponent {
 })
 export class ModalComponent implements AfterViewInit, OnDestroy {
   private readonly document = inject(DOCUMENT);
-  private readonly returnFocus = this.document.activeElement as HTMLElement | null;
+  private readonly focus = new OverlayFocus(this.document);
 
   @Input()
   title = '';
@@ -121,45 +127,12 @@ export class ModalComponent implements AfterViewInit, OnDestroy {
   private dialog?: ElementRef<HTMLElement>;
 
   ngAfterViewInit(): void {
-    setTimeout(() => {
-      const dialog = this.dialog?.nativeElement;
-      const firstField = dialog?.querySelector<HTMLElement>(
-        '.modal-body [autofocus], .modal-body input:not([type="hidden"]):not(:disabled), .modal-body select:not(:disabled), .modal-body textarea:not(:disabled)',
-      );
-
-      (firstField ?? dialog)?.focus();
-    });
-  }
-
-  @HostListener('document:keydown', ['$event'])
-  onDocumentKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      this.requestClose();
-      return;
-    }
-
-    if (event.key !== 'Tab') return;
     const dialog = this.dialog?.nativeElement;
     if (!dialog) return;
-
-    const focusable = this.focusableElements(dialog);
-    if (focusable.length === 0) {
-      event.preventDefault();
-      dialog.focus();
-      return;
-    }
-
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    const active = this.document.activeElement;
-    if (event.shiftKey && (active === first || !dialog.contains(active))) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
-      event.preventDefault();
-      first.focus();
-    }
+    const firstField = dialog.querySelector<HTMLElement>(
+      '.modal-body [autofocus], .modal-body input:not([type="hidden"]):not(:disabled), .modal-body select:not(:disabled), .modal-body textarea:not(:disabled)',
+    );
+    this.focus.open(dialog, () => this.requestClose(), firstField);
   }
 
   onBackdrop(event: MouseEvent): void {
@@ -175,18 +148,7 @@ export class ModalComponent implements AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
-    const target = this.returnFocus;
-    setTimeout(() => {
-      if (target?.isConnected) target.focus();
-    });
-  }
-
-  private focusableElements(dialog: HTMLElement): HTMLElement[] {
-    return Array.from(
-      dialog.querySelectorAll<HTMLElement>(
-        'a[href], button:not(:disabled), input:not([type="hidden"]):not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
-      ),
-    ).filter((element) => !element.hidden && element.getAttribute('aria-hidden') !== 'true');
+    this.focus.close();
   }
 }
 
@@ -644,7 +606,8 @@ function safeRetrySeconds(value: unknown): number | null {
 export function fmtDate(
   value?: string | null,
 ): string {
+  if(value && value.length === 10)return formatDateOnly(value) || '—';
   return value
-    ? new Date(value).toLocaleString('vi-VN')
+    ? new Date(/Z$|[+-]\d\d:\d\d$/.test(value) || value.length <= 10 ? value : value + 'Z').toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })
     : '—';
 }

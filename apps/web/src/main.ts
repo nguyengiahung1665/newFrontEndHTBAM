@@ -30,7 +30,21 @@ bootstrapApplication(AppComponent, appConfig).catch(
     notice.textContent =
       'Không thể tải giao diện. Vui lòng tải lại trang hoặc liên hệ quản trị hệ thống.';
 
-    main.append(title, description, notice);
+    const brand = document.createElement('a');
+    brand.href = '/';
+    brand.className = 'compact-brand';
+    brand.title = 'HTBAM - Khoa Công nghệ Thông tin HUIT';
+    const logo = document.createElement('img');
+    logo.src = 'assets/huit-logo.png';
+    logo.alt = 'Logo HUIT';
+    logo.className = 'compact-brand__logo';
+    logo.width = logo.height = 26;
+    const name = document.createElement('span');
+    name.className = 'compact-brand__name';
+    name.textContent = 'HTBAM';
+    brand.append(logo, name);
+
+    main.append(brand, title, description, notice);
     document.body.append(main);
   },
 );

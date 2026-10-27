@@ -1,15 +1,25 @@
+import { normalizeAcademicYear, validAcademicYear, normalizeSemester } from '../shared/date-only';
 import {
   Component,
   OnInit,
+  OnDestroy,
+  DestroyRef,
   inject,
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute, Router } from '@angular/router';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { ClassSectionsComponent } from './class-sections.component';
+import { CatalogTab as Tab, CATALOG_TABS, resolveCatalogTab, visibleCatalogTabs } from '../shared/catalog-navigation';
+import { SearchSelectComponent } from '../shared/search-select.component';
+import { CatalogSectionHeaderComponent } from '../shared/catalog-section-header.component';
 import {
   Observable,
   catchError,
   forkJoin,
   of,
+  Subscription,
 } from 'rxjs';
 import { ApiService } from '../core/api.service';
 import { AuthService } from '../core/auth.service';
@@ -17,47 +27,25 @@ import {
   ModalComponent,
   PageTitleComponent,
   RowActionMenuComponent,
+  displayBusinessCode,
   apiFieldErrors,
   errorText,
   statusText,
 } from '../shared/ui';
 
-type Tab =
-  | 'faculties'
-  | 'departments'
-  | 'student-classes'
-  | 'courses'
-  | 'teachers'
-  | 'class-sections'
-  | 'rooms'
-  | 'cameras'
-  | 'roster';
-
 @Component({
   standalone: true,
   imports: [
-    FormsModule,
+    FormsModule, SearchSelectComponent, ClassSectionsComponent, CatalogSectionHeaderComponent,
     ModalComponent,
     PageTitleComponent,
     RowActionMenuComponent,
   ],
   template: `
     <app-page-title
-      title="Danh mục & lớp học"
-      subtitle="Quản lý dữ liệu nền, lớp học phần và roster sinh viên."
-    >
-      @if (
-        canCreateTab() &&
-        tab() !== 'roster'
-      ) {
-        <button
-          type="button"
-          (click)="openEditor()"
-        >
-          + Thêm {{ label() }}
-        </button>
-      }
-    </app-page-title>
+      title="Danh mục dữ liệu"
+      subtitle="Quản lý dữ liệu nền trong phạm vi được giao."
+    />
 
     @if (error()) {
       <div class="error-box">
@@ -77,13 +65,19 @@ type Tab =
       </div>
     }
 
-    <div class="tabs">
+    <div class="tabs catalog-tabs" role="tablist" aria-label="Danh mục dữ liệu">
       @for (
-        currentTab of tabs;
+        currentTab of visibleTabs();
         track currentTab.key
       ) {
         <button
           type="button"
+          role="tab"
+          [id]="'catalog-tab-' + currentTab.key"
+          [attr.aria-selected]="tab() === currentTab.key"
+          [attr.aria-controls]="'catalog-panel-' + currentTab.key"
+          [attr.tabindex]="tab() === currentTab.key ? 0 : -1"
+          (keydown)="tabKey($event, currentTab.key)"
           [class.active]="
             tab() === currentTab.key
           "
@@ -98,79 +92,13 @@ type Tab =
       }
     </div>
 
-    @if (tab() === 'roster') {
-      <section class="card">
-        <h3>Danh sách sinh viên lớp học phần</h3>
-
-        <div class="toolbar">
-          <label>
-            Lớp học phần
-
-            <select
-              [(ngModel)]="
-                rosterSectionId
-              "
-              (ngModelChange)="
-                loadRoster()
-              "
-            >
-              <option [ngValue]="null">
-                -- Chọn --
-              </option>
-
-              @for (
-                section of refs.sections;
-                track section.id
-              ) {
-                <option
-                  [ngValue]="
-                    section.id
-                  "
-                >
-                  {{ section.code }}
-                  -
-                  {{ section.name }}
-                </option>
-              }
-            </select>
-          </label>
-        </div>
-
-        @if (rosterSectionId) {
-          <div class="filter-bar" style="padding:0;border:0;margin-top:16px">
-            <label class="grow">Tìm sinh viên<input [(ngModel)]="rosterQuery" placeholder="MSSV hoặc họ tên…" /></label>
-            @if (auth.hasPermission('ROSTER_MANAGE_SCOPE')) {
-              <button type="button" class="secondary" (click)="selectAllRoster()">Chọn tất cả</button>
-              <button type="button" class="secondary" (click)="clearRoster()">Bỏ chọn tất cả</button>
-            }
-          </div>
-          <div class="roster-grid">
-            <div class="roster-column">
-              <h3>Sinh viên trong hệ thống ({{ availableRosterStudents().length }})</h3>
-              @for (student of availableRosterStudents(); track student.id) {
-                <label class="check"><input type="checkbox" [checked]="false" [disabled]="!auth.hasPermission('ROSTER_MANAGE_SCOPE')" (change)="toggleRoster(student.id, $event)" />{{ student.studentCode }} - {{ student.fullName }}</label>
-              } @empty { <p class="empty">Không còn sinh viên phù hợp.</p> }
-            </div>
-            <div class="roster-column">
-              <h3>Sinh viên thuộc lớp ({{ selectedRosterStudents().length }})</h3>
-              @for (student of selectedRosterStudents(); track student.id) {
-                <label class="check"><input type="checkbox" [checked]="true" [disabled]="!auth.hasPermission('ROSTER_MANAGE_SCOPE')" (change)="toggleRoster(student.id, $event)" />{{ student.studentCode }} - {{ student.fullName }}</label>
-              } @empty { <p class="empty">Chưa chọn sinh viên.</p> }
-            </div>
-          </div>
-
-          @if (auth.hasPermission('ROSTER_MANAGE_SCOPE')) {
-            <button
-              type="button"
-              [disabled]="saving()"
-              (click)="saveRoster()"
-            >
-              {{ saving() ? 'Đang lưu…' : 'Lưu roster' }}
-            </button>
-          }
-        }
-      </section>
+    <div role="tabpanel" [id]="'catalog-panel-' + tab()" [attr.aria-labelledby]="'catalog-tab-' + tab()">
+    @if(tab() === 'class-sections'){
+      <app-class-sections />
     } @else {
+      <app-catalog-section-header [title]="label()" [description]="sectionDescription()">
+        @if(canCreateTab() && tab() !== 'roster'){<button type="button" (click)="openEditor()">+ Thêm {{label()}}</button>}
+      </app-catalog-section-header>
       <div class="filter-bar">
         <label class="grow">Tìm kiếm<input [(ngModel)]="managementSearch" [placeholder]="'Tìm trong ' + label().toLowerCase() + '…'" /></label>
       </div>
@@ -179,10 +107,10 @@ type Tab =
           <table>
             <thead>
               <tr>
-                <th>Mã</th>
-                <th>Tên / Họ tên</th>
-                <th>Thông tin</th>
-                <th>Ghi chú</th>
+                @if(tab() !== 'courses'){<th>Mã</th>}
+                <th>{{tab() === 'courses' ? 'Tên môn học' : 'Tên / Họ tên'}}</th>
+                @if(tab() === 'courses'){<th>Bộ môn</th><th>Số tín chỉ</th><th>Năm học bắt đầu</th><th>Học kỳ bắt đầu</th>}@else{<th>Thông tin</th>}
+                <th [class.catalog-note]="tab() === 'courses'">Ghi chú</th>
                 <th>Trạng thái</th>
                 <th>Thao tác</th>
               </tr>
@@ -194,12 +122,12 @@ type Tab =
                 track item.id
               ) {
                 <tr>
-                  <td>
+                  @if(tab() !== 'courses'){                  <td>
                     {{
-                      item.code ||
-                        item.teacherCode
+                      codeLabel(item.code || item.teacherCode)
                     }}
-                  </td>
+                    @if(tab() === 'teachers' && legacyTeacherCode(item.teacherCode)){<small class="badge">Mã cũ</small>}
+                  </td>}
 
                   <td>
                     {{
@@ -208,11 +136,11 @@ type Tab =
                     }}
                   </td>
 
-                  <td>
-                    {{ info(item) }}
-                  </td>
+                  @if(tab() === 'courses'){
+                    <td>{{departmentName(item.departmentId)}}</td><td>{{item.credits}}</td><td>{{item.startAcademicYear || 'Chưa thiết lập'}}</td><td>{{item.startSemester || 'Chưa thiết lập'}}</td>
+                  }@else{<td>{{ info(item) }}</td>}
 
-                  <td>
+                  <td [class.catalog-note]="tab() === 'courses'">
                     <span
                       class="clamp"
                       [title]="
@@ -309,7 +237,7 @@ type Tab =
               } @empty {
                 <tr>
                   <td
-                    colspan="6"
+                    [attr.colspan]="tab() === 'courses' ? 8 : 6"
                     class="empty"
                   >
                     Chưa có dữ liệu.
@@ -321,6 +249,7 @@ type Tab =
         </div>
       </section>
     }
+    </div>
 
     @if (editorOpen()) {
       <app-modal
@@ -336,37 +265,24 @@ type Tab =
       >
         <form
           class="form-grid"
+          [class.course-catalog-form]="tab() === 'courses'"
+          [class.catalog-editor-form]="tab() === 'courses' || tab() === 'departments' || tab() === 'teachers'"
           (ngSubmit)="saveCatalog()"
         >
           @if (editorError()) {
             <div class="error-box span2">{{ editorError() }}</div>
           }
-          <label>
-            {{
-              tab() === 'teachers'
-                ? 'Mã GV'
-                : 'Mã'
-            }}
-            *
-
-            <input
-              [(ngModel)]="
-                form[
-                  tab() === 'teachers'
-                    ? 'teacherCode'
-                    : 'code'
-                ]
-              "
-              [ngModelOptions]="{
-                standalone: true
-              }"
-              required
-              (input)="clearEditorFieldError(tab() === 'teachers' ? 'teacherCode' : 'code')"
-            />
-            @if (editorFieldErrors()[tab() === 'teachers' ? 'teacherCode' : 'code']) {
-              <small class="field-error">{{ editorFieldErrors()[tab() === 'teachers' ? 'teacherCode' : 'code'] }}</small>
-            }
-          </label>
+          @if(tab() === 'courses'){
+            <label class="span2">Tên môn học *<input type="text" name="courseName" [(ngModel)]="form.name" required maxlength="256" /></label>
+            <label class="course-department">Bộ môn *<app-search-select name="courseDepartment" resource="departments" label="Bộ môn" [boundToModal]="true" [constrainWidth]="true" [markLegacyDepartments]="true" [ngModel]="form.departmentId" (ngModelChange)="courseDepartmentChanged($event)" [disabled]="saving() || !!editingId()" /></label>
+            <label>Tín chỉ *<input name="courseCredits" type="number" min="1" max="20" [(ngModel)]="form.credits" required /></label>
+            <div class="course-period span2">
+              <label>Năm học bắt đầu *<input name="startAcademicYear" [(ngModel)]="form.startAcademicYear" (blur)="normalizePeriod()" placeholder="Ví dụ: 2026-2027" required />@if(periodTouched && !validAcademicYear(form.startAcademicYear || '')){<small class="field-error">Năm học phải có dạng YYYY-YYYY và hai năm phải liên tiếp.</small>}</label>
+              <label>Học kỳ bắt đầu *<input name="startSemester" [(ngModel)]="form.startSemester" (blur)="normalizePeriod()" placeholder="Ví dụ: HK1" required />@if(periodTouched && !['HK1','HK2'].includes(form.startSemester)){<small class="field-error">Học kỳ chỉ nhận HK1 hoặc HK2.</small>}</label>
+            </div>
+            @if(departmentCodeError()){<p class="field-error span2" role="alert">{{departmentCodeError()}}</p>}
+          } @else {
+          @if(departmentCodeError()){<p class="field-error span2" role="alert">{{departmentCodeError()}}</p>}
 
           <label>
             {{
@@ -390,6 +306,13 @@ type Tab =
               required
             />
           </label>
+          }
+
+          @if (tab() === 'faculties' && !editingId()) {
+            <label>Bộ môn đầu tiên *<input name="initialDepartmentName" [(ngModel)]="form.initialDepartmentName" maxlength="256" required /></label>
+            <label>Trưởng khoa đầu tiên *<app-search-select name="initialHeadTeacherId" resource="faculty-initial-heads" label="Trưởng khoa đầu tiên" [(ngModel)]="form.initialHeadTeacherId" /></label>
+            <p class="notice span2">Giảng viên được chọn sẽ chuyển về bộ môn mới và được bổ nhiệm Trưởng khoa. Chỉ chọn hồ sơ có sẵn chưa có phân công giảng dạy hoặc chức vụ còn hiệu lực; không tạo thêm hồ sơ giảng viên.</p>
+          }
 
           @if (
             tab() === 'departments' ||
@@ -398,36 +321,7 @@ type Tab =
             <label>
               Khoa *
 
-              <select
-                [(ngModel)]="
-                  form.facultyId
-                "
-                [ngModelOptions]="{
-                  standalone: true
-                }"
-              >
-                <option
-                  [ngValue]="null"
-                >
-                  -- Chọn --
-                </option>
-
-                @for (
-                  faculty of
-                    refs.faculties;
-                  track faculty.id
-                ) {
-                  <option
-                    [ngValue]="
-                      faculty.id
-                    "
-                  >
-                    {{ faculty.code }}
-                    -
-                    {{ faculty.name }}
-                  </option>
-                }
-              </select>
+              <app-search-select resource="faculties" label="Khoa" [(ngModel)]="form.facultyId" [ngModelOptions]="{standalone:true}" />
             </label>
           }
 
@@ -451,65 +345,12 @@ type Tab =
           }
 
           @if (
-            tab() === 'courses' ||
             tab() === 'teachers'
           ) {
             <label>
               Bộ môn
 
-              <select
-                [(ngModel)]="
-                  form.departmentId
-                "
-                [ngModelOptions]="{
-                  standalone: true
-                }"
-              >
-                <option
-                  [ngValue]="null"
-                >
-                  -- Chọn --
-                </option>
-
-                @for (
-                  department of
-                    refs.departments;
-                  track department.id
-                ) {
-                  <option
-                    [ngValue]="
-                      department.id
-                    "
-                  >
-                    {{
-                      department.code
-                    }}
-                    -
-                    {{
-                      department.name
-                    }}
-                  </option>
-                }
-              </select>
-            </label>
-          }
-
-          @if (
-            tab() === 'courses'
-          ) {
-            <label>
-              Tín chỉ
-
-              <input
-                type="number"
-                min="1"
-                [(ngModel)]="
-                  form.credits
-                "
-                [ngModelOptions]="{
-                  standalone: true
-                }"
-              />
+              <app-search-select resource="departments" label="Bộ môn" [boundToModal]="true" [constrainWidth]="true" [markLegacyDepartments]="true" [ngModel]="form.departmentId" (ngModelChange)="teacherDepartmentChanged($event)" [ngModelOptions]="{standalone:true}" />
             </label>
           }
 
@@ -531,129 +372,24 @@ type Tab =
             </label>
 
             <label>
-              Mã tài khoản liên kết
+              Tài khoản giảng viên liên kết
 
-              <input
-                type="number"
-                [(ngModel)]="
-                  form.userId
-                "
-                [ngModelOptions]="{
-                  standalone: true
-                }"
-                (input)="clearEditorFieldError('userId')"
-              />
+              <app-search-select resource="users" label="Tài khoản giảng viên liên kết" [boundToModal]="true" [constrainWidth]="true" [(ngModel)]="form.userId" [ngModelOptions]="{standalone:true}" [filters]="{departmentId:form.departmentId}" [disabled]="!!editingId() || !form.departmentId || !!departmentCodeError()" />
               @if (editorFieldErrors()['userId']) {
                 <small class="field-error">{{ editorFieldErrors()['userId'] }}</small>
               }
             </label>
           }
 
-          @if (
-            tab() ===
-            'class-sections'
-          ) {
-            <label>
-              Môn học *
-
-              <select
-                [(ngModel)]="
-                  form.courseId
-                "
-                [ngModelOptions]="{
-                  standalone: true
-                }"
-              >
-                <option
-                  [ngValue]="null"
-                >
-                  -- Chọn --
-                </option>
-
-                @for (
-                  course of refs.courses;
-                  track course.id
-                ) {
-                  <option
-                    [ngValue]="
-                      course.id
-                    "
-                  >
-                    {{ course.code }}
-                    -
-                    {{ course.name }}
-                  </option>
-                }
-              </select>
-            </label>
-
-            <label>
-              Giảng viên *
-
-              <select
-                [(ngModel)]="
-                  form.teacherId
-                "
-                [ngModelOptions]="{
-                  standalone: true
-                }"
-              >
-                <option
-                  [ngValue]="null"
-                >
-                  -- Chọn --
-                </option>
-
-                @for (
-                  teacher of
-                    refs.teachers;
-                  track teacher.id
-                ) {
-                  <option
-                    [ngValue]="
-                      teacher.id
-                    "
-                  >
-                    {{
-                      teacher.teacherCode
-                    }}
-                    -
-                    {{
-                      teacher.fullName
-                    }}
-                  </option>
-                }
-              </select>
-            </label>
-
-            <label>
-              Học kỳ *
-
-              <input
-                [(ngModel)]="
-                  form.semester
-                "
-                [ngModelOptions]="{
-                  standalone: true
-                }"
-              />
-            </label>
-
-            <label>
-              Năm học *
-
-              <input
-                [(ngModel)]="
-                  form.academicYear
-                "
-                [ngModelOptions]="{
-                  standalone: true
-                }"
-              />
-            </label>
+          @if(tab() === 'student-classes' && !editingId()){
+            <label>Chuyên ngành / Bộ môn *<app-search-select name="studentClassDepartment" resource="departments" label="Chuyên ngành / Bộ môn" [filters]="{facultyId:form.facultyId}" [(ngModel)]="form.departmentId" /></label>
           }
-
           @if (tab() === 'rooms') {
+            @if(!editingId()){
+              @if(form.roomType !== 'ZOOM'){<label>Cơ sở *<input name="campus" [(ngModel)]="form.campus" placeholder="Ví dụ: CS1" required /></label><label>Dãy hoặc tòa *<input name="building" [(ngModel)]="form.building" placeholder="Ví dụ: A" required /></label>}
+              <label>{{form.roomType === 'ZOOM' ? 'Phòng trực tuyến *' : 'Số phòng *'}}<input name="roomNumber" [(ngModel)]="form.roomNumber" [placeholder]="form.roomType === 'ZOOM' ? 'Ví dụ: ZOOM48' : 'Ví dụ: 101'" required /></label>
+            }
+            <label>Loại phòng<select [(ngModel)]="form.roomType" [ngModelOptions]="{standalone:true}"><option value="UNKNOWN">Chưa xác định</option><option value="THEORY">Phòng lý thuyết</option><option value="ZOOM">Phòng Zoom</option><option value="COMPUTER">Phòng máy tính</option><option value="LAB">Phòng thí nghiệm</option><option value="PRACTICE">Phòng thực hành</option><option value="PE">Giáo dục thể chất</option><option value="DEFENSE">Quốc phòng – an ninh</option></select></label>
             <label>
               Vị trí
 
@@ -689,35 +425,7 @@ type Tab =
             <label>
               Phòng *
 
-              <select
-                [(ngModel)]="
-                  form.roomId
-                "
-                [ngModelOptions]="{
-                  standalone: true
-                }"
-              >
-                <option
-                  [ngValue]="null"
-                >
-                  -- Chọn --
-                </option>
-
-                @for (
-                  room of refs.rooms;
-                  track room.id
-                ) {
-                  <option
-                    [ngValue]="
-                      room.id
-                    "
-                  >
-                    {{ room.code }}
-                    -
-                    {{ room.name }}
-                  </option>
-                }
-              </select>
+              <app-search-select resource="rooms" label="Phòng học" [(ngModel)]="form.roomId" [ngModelOptions]="{standalone:true}" />
             </label>
 
             <label class="span2">
@@ -739,7 +447,7 @@ type Tab =
             Ghi chú
 
             <textarea
-              rows="4"
+              [rows]="tab() === 'courses' ? 2 : 4"
               [(ngModel)]="form.note"
               [ngModelOptions]="{
                 standalone: true
@@ -760,10 +468,10 @@ type Tab =
             Hoạt động
           </label>
 
-          <div class="form-actions">
+          <div class="form-actions" [class.catalog-footer]="tab() === 'courses' || tab() === 'departments' || tab() === 'teachers'">
             <button
               type="submit"
-              [disabled]="saving()"
+              [disabled]="saving() || ((tab() === 'courses' || tab() === 'teachers') && !editingId() && (!form.departmentId || !!departmentCodeError()))"
             >
               {{
                 saving()
@@ -797,10 +505,7 @@ type Tab =
           Bạn có chắc muốn ngừng hoạt động
           <b>
             {{
-              pendingDeactivate()
-                ?.code ||
-              pendingDeactivate()
-                ?.teacherCode
+              pendingDeactivate()?.name || pendingDeactivate()?.fullName
             }}
           </b>
           không?
@@ -834,8 +539,12 @@ type Tab =
   `,
 })
 export class ManagementComponent
-  implements OnInit
+  implements OnInit, OnDestroy
 {
+  private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
+  private readonly destroyRef = inject(DestroyRef);
+  private catalogRequest?: Subscription;
   private readonly api =
     inject(ApiService);
 
@@ -844,47 +553,7 @@ export class ManagementComponent
 
   readonly statusText = statusText;
 
-  readonly tabs: {
-    key: Tab;
-    label: string;
-  }[] = [
-    {
-      key: 'faculties',
-      label: 'Khoa',
-    },
-    {
-      key: 'departments',
-      label: 'Bộ môn',
-    },
-    {
-      key: 'student-classes',
-      label: 'Lớp sinh hoạt',
-    },
-    {
-      key: 'courses',
-      label: 'Môn học',
-    },
-    {
-      key: 'teachers',
-      label: 'Giảng viên',
-    },
-    {
-      key: 'class-sections',
-      label: 'Lớp học phần',
-    },
-    {
-      key: 'rooms',
-      label: 'Phòng học',
-    },
-    {
-      key: 'cameras',
-      label: 'Camera',
-    },
-    {
-      key: 'roster',
-      label: 'Danh sách lớp học phần',
-    },
-  ];
+  readonly tabs = CATALOG_TABS;
 
   readonly tab =
     signal<Tab>('faculties');
@@ -933,6 +602,30 @@ export class ManagementComponent
     | null = null;
 
   managementSearch = '';
+  readonly departmentCodeError=signal('');
+  readonly codeLabel=displayBusinessCode;
+  readonly validAcademicYear=validAcademicYear; periodTouched=false;
+  normalizePeriod():void{this.form.startAcademicYear=normalizeAcademicYear(this.form.startAcademicYear??'');this.form.startSemester=normalizeSemester(this.form.startSemester??'');this.periodTouched=true;}
+  departmentName(id:number):string{return this.refs.departments.find((x:any)=>x.id===id)?.name??'Chưa thiết lập';}
+  originalTeacherDepartmentId:number|null=null;
+  sectionDescription():string{return CATALOG_TABS.find(x=>x.key===this.tab())?.description??'';}
+  legacyTeacherCode(code:string):boolean{return !/^GV-[A-Z0-9]+(?:-[0-9]{2})?-[0-9]{4}$/.test(code??'');}
+  teacherDepartmentChanged(id:number|null):void{
+    this.form.departmentId=id;this.departmentCodeError.set('');
+    if(this.editingId())return;
+    this.form.userId=null;
+    if(!id)return;
+    const department=this.refs.departments.find((x:any)=>x.id===id);
+    if(!department||!/^BM-[A-Z0-9]+(?:-[0-9]{2})?$/.test(department.code)||/^BM-[A-F0-9]{32}(?:-[0-9]{2})?$/.test(department.code)||department.code.length>36){this.departmentCodeError.set('Bộ môn chưa có mã hợp lệ. Vui lòng chuẩn hóa mã bộ môn trước khi thêm giảng viên.');return;}
+  }
+  courseDepartmentChanged(id:number|null):void{
+    this.form.departmentId=id;this.departmentCodeError.set('');
+    if(!id||this.editingId())return;
+    const department=this.refs.departments.find((x:any)=>x.id===id);
+    if(!department||!/^BM-[A-Z0-9]+(?:-[0-9]{2})?$/.test(department.code)||/^BM-[A-F0-9]{32}(?:-[0-9]{2})?$/.test(department.code)||department.code.length>36){
+      this.departmentCodeError.set('Bộ môn chưa có mã hợp lệ. Vui lòng chuẩn hóa mã bộ môn trước khi tạo môn học.');return;
+    }
+  }
   rosterQuery = '';
 
   readonly rosterIds =
@@ -942,7 +635,7 @@ export class ManagementComponent
     const key = this.managementSearch.trim().toLowerCase();
     if (!key) return this.data();
     return this.data().filter((item) =>
-      [item.code, item.teacherCode, item.name, item.fullName, item.email, item.note]
+      [item.name, item.fullName, item.email, item.note, item.startAcademicYear, item.startSemester, this.departmentName(item.departmentId), ...(this.tab() === 'courses' ? [] : [item.code,item.teacherCode])]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(key)),
     );
@@ -989,7 +682,20 @@ export class ManagementComponent
   }
 
   ngOnInit(): void {
-    this.loadAll();
+    this.route.queryParamMap.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(params => {
+      this.catalogRequest?.unsubscribe();
+      const selected = resolveCatalogTab(this.visibleTabs(), params.get('tab'));
+      this.tab.set(selected);
+      this.refreshData();
+      this.editorOpen.set(false); this.pendingDeactivate.set(null); this.error.set(''); this.refErrors.set({});
+      if (selected !== 'class-sections') this.loadAll();
+    });
+  }
+
+  ngOnDestroy(): void { this.catalogRequest?.unsubscribe();  }
+
+  visibleTabs(): {key: Tab; label: string}[] {
+    return visibleCatalogTabs(this.auth);
   }
 
   label(): string {
@@ -1028,9 +734,11 @@ export class ManagementComponent
   }
 
   canCreateTab(): boolean {
+    if(this.tab()==='teachers' && this.auth.isAdmin())return false;
     const permission: Partial<
       Record<Tab, string>
     > = {
+      faculties: 'FACULTY_CREATE',
       departments:
         'DEPARTMENT_MANAGE',
       'student-classes':
@@ -1038,7 +746,7 @@ export class ManagementComponent
       courses:
         'DEPARTMENT_DATA_MANAGE',
       teachers:
-        'DEPARTMENT_DATA_MANAGE',
+        'TEACHER_CREATE',
       'class-sections':
         'CLASS_SECTION_CREATE',
       rooms: 'ROOM_MANAGE',
@@ -1054,6 +762,7 @@ export class ManagementComponent
   }
 
   canEditTab(): boolean {
+    if (this.tab() === 'teachers') return this.auth.hasPermission('DEPARTMENT_DATA_MANAGE');
     const permission: Partial<
       Record<Tab, string>
     > = {
@@ -1118,10 +827,8 @@ export class ManagementComponent
   }
 
   selectTab(tab: Tab): void {
-    this.tab.set(tab);
-    this.editorOpen.set(false);
-    this.pendingDeactivate.set(null);
-    this.refreshData();
+    if (!this.visibleTabs().some(item => item.key === tab)) return;
+    void this.router.navigate(['/management'], { queryParams: { tab }, queryParamsHandling: 'merge' });
 
     if (
       tab === 'roster' &&
@@ -1147,11 +854,21 @@ export class ManagementComponent
     }
   }
 
+  tabKey(event: KeyboardEvent, current: Tab): void {
+    const tabs = this.visibleTabs(); const index = tabs.findIndex(tab => tab.key === current);
+    const target = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : -1;
+    if (target < 0) return;
+    event.preventDefault(); this.selectTab(tabs[target].key);
+    const button = (event.currentTarget as HTMLElement).parentElement?.querySelector<HTMLButtonElement>('#catalog-tab-' + tabs[target].key);
+    button?.focus(); button?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
   loadAll(): void {
+    this.catalogRequest?.unsubscribe();
     this.error.set('');
     this.refErrors.set({});
 
-    forkJoin({
+    this.catalogRequest = forkJoin({
       faculties:
         this.withFallback(
           'faculties',
@@ -1187,12 +904,7 @@ export class ManagementComponent
           this.api.teachers(),
         ),
 
-      sections:
-        this.withFallback(
-          'sections',
-          [],
-          this.api.classSections(),
-        ),
+      sections: of([]),
 
       rooms:
         this.withFallback(
@@ -1209,14 +921,14 @@ export class ManagementComponent
         ),
 
       students:
-        this.withFallback(
+        this.auth.hasPermission('STUDENT_GLOBAL_VIEW') ? this.withFallback(
           'students',
           [],
           this.api.students(
             '',
             'active',
           ),
-        ),
+        ) : of([]),
     }).subscribe({
       next: (result) => {
         this.refs = {
@@ -1306,6 +1018,7 @@ export class ManagementComponent
     this.message.set('');
     this.editorError.set('');
     this.editorFieldErrors.set({});
+    this.departmentCodeError.set('');
 
     this.editingId.set(
       item?.id ?? null,
@@ -1316,12 +1029,15 @@ export class ManagementComponent
           ...item,
         }
       : this.emptyForm();
+    delete this.form.code; delete this.form.teacherCode; this.periodTouched=false;
+    this.originalTeacherDepartmentId=item?.departmentId??null;
 
     this.editorOpen.set(true);
   }
 
   closeEditor(): void {
     if (!this.saving()) {
+
       this.editorOpen.set(false);
     }
   }
@@ -1332,6 +1048,7 @@ export class ManagementComponent
       note: '',
       credits: 3,
       capacity: 0,
+      roomType: 'UNKNOWN', startAcademicYear: '', startSemester: '', campus:'', building:'', roomNumber:'',
       facultyId: null,
       departmentId: null,
       courseId: null,
@@ -1343,6 +1060,7 @@ export class ManagementComponent
   }
 
   saveCatalog(): void {
+    if(this.saving())return;
     if (
       this.editingId() !== null
         ? !this.canEditTab()
@@ -1351,6 +1069,7 @@ export class ManagementComponent
       return;
     }
 
+    if(this.tab() === 'courses')this.normalizePeriod();
     const validationError =
       this.validateCatalog();
 
@@ -1366,14 +1085,20 @@ export class ManagementComponent
     this.editorFieldErrors.set({});
     this.message.set('');
 
+    const payload={...this.form};
+    delete payload.code;delete payload.teacherCode;delete payload.startYear;delete payload.endYear;
+    if(this.tab() === 'student-classes')payload.startYear=this.form.startYear;
     this.api
       .saveCatalog(
         this.tab(),
         this.editingId(),
-        this.form,
+        payload,
       )
       .subscribe({
-        next: () => {
+        next: (saved:any) => {
+          this.managementSearch='';
+          const key=this.tab()==='courses'?'courses':this.tab()==='departments'?'departments':this.tab()==='teachers'?'teachers':null;
+          if(key&&saved?.id){this.refs[key]=[saved,...this.refs[key].filter((x:any)=>x.id!==saved.id)];this.refreshData();}
           this.message.set(
             `Đã lưu ${this.label()}.`,
           );
@@ -1398,14 +1123,20 @@ export class ManagementComponent
   }
 
   validateCatalog(): string | null {
+    if(this.tab()==='courses'){
+      if(!validAcademicYear(this.form.startAcademicYear??''))return 'Năm học phải có dạng YYYY-YYYY và hai năm phải liên tiếp.';
+      if(!['HK1','HK2'].includes(this.form.startSemester))return 'Học kỳ chỉ nhận HK1 hoặc HK2.';
+    }
+    if(this.tab()==='student-classes'&&!this.editingId()&&(!this.form.departmentId||!Number.isInteger(this.form.startYear)))return 'Vui lòng chọn Bộ môn và nhập khóa để tạo lớp sinh hoạt.';
+    if(this.tab()==='rooms'&&!this.editingId()&&(!this.form.roomNumber||(this.form.roomType!=='ZOOM'&&(!this.form.campus||!this.form.building))))return 'Vui lòng bổ sung cơ sở, dãy hoặc tòa và số phòng; phòng trực tuyến cần tên phòng trực tuyến.';
+    if (this.tab() === 'faculties' && !this.editingId() && (!String(this.form.initialDepartmentName ?? '').trim() || !this.form.initialHeadTeacherId))
+      return 'Cần tên bộ môn đầu tiên và giảng viên hiện có làm Trưởng khoa.';
+    if(this.tab()==='courses'&&!this.editingId()&&(this.departmentCodeError()))return this.departmentCodeError();
+    if(this.tab()==='teachers'&&!this.editingId()&&(this.departmentCodeError()))return this.departmentCodeError();
+    if(this.tab()==='courses'&&(!Number.isInteger(Number(this.form.credits))||Number(this.form.credits)<1||Number(this.form.credits)>20))return 'Số tín chỉ cần từ 1 đến 20.';
     const isTeacher =
       this.tab() === 'teachers';
 
-    const code = String(
-      isTeacher
-        ? this.form.teacherCode ?? ''
-        : this.form.code ?? '',
-    ).trim();
 
     const name = String(
       isTeacher
@@ -1413,9 +1144,6 @@ export class ManagementComponent
         : this.form.name ?? '',
     ).trim();
 
-    if (!code) {
-      return 'Mã là bắt buộc.';
-    }
 
     if (!name) {
       return 'Tên/Họ tên là bắt buộc.';

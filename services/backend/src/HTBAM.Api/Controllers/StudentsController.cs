@@ -20,6 +20,7 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
     [HttpGet]
     public async Task<ActionResult> List([FromQuery] string? q, [FromQuery] long? studentClassId, [FromQuery] bool includeInactive = false, [FromQuery] string? status = null, CancellationToken ct = default)
     {
+        if (!await AccessScope.CanManageGlobalStudents(db, User, ct)) return Forbid();
         var teacherId = await AccessScope.TeacherIdAsync(db, User, ct);
         var permittedSessions = AccessScope.Sessions(db, User, teacherId).Select(s => s.Id);
         var permittedStudents = db.SessionStudentsSet.Where(x => permittedSessions.Contains(x.SessionId)).Select(x => x.StudentId)
@@ -63,7 +64,7 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
         {
             s.Id, s.StudentCode, s.FullName, s.Email, s.StudentClassId,
             StudentClass = s.StudentClass != null ? s.StudentClass.Code : null,
-            s.AnonymousCode, s.IsActive, s.CreatedAt,
+            s.AnonymousCode, s.SourceAnonymousCode, s.IsActive, s.CreatedAt,
             CanManage = manageableStudents.Contains(s.Id)
         }).ToListAsync(ct));
     }
@@ -71,29 +72,31 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
     [HttpGet("{id:long}")]
     public async Task<ActionResult> Get(long id, CancellationToken ct)
     {
+        if (!await AccessScope.CanManageGlobalStudents(db, User, ct)) return Forbid();
         if (!await AccessScope.CanViewStudentAsync(db, User, id, ct)) return Forbid();
         var student = await db.StudentsSet.AsNoTracking().Include(x => x.StudentClass).FirstOrDefaultAsync(x => x.Id == id, ct);
         return student is null
             ? NotFound()
-            : Ok(new { student.Id, student.StudentCode, student.FullName, student.Email, student.StudentClassId, StudentClass = student.StudentClass?.Code, student.AnonymousCode, student.IsActive, student.CreatedAt });
+            : Ok(new { student.Id, student.StudentCode, student.FullName, student.Email, student.StudentClassId, StudentClass = student.StudentClass?.Code, student.AnonymousCode, student.SourceAnonymousCode, student.IsActive, student.CreatedAt });
     }
 
     [HttpPost, Authorize(Roles = "LECTURER")]
-    public async Task<ActionResult> Create(UpsertStudentRequest request, CancellationToken ct)
+    public Task<ActionResult> Create(UpsertStudentRequest request, CancellationToken ct) => BusinessTransaction.Run<ActionResult>(db, BusinessCodes.Resource, async () =>
     {
         if (request.StudentClassId is null || !await AccessScope.CanManageStudentClassAsync(db, User, request.StudentClassId.Value, ct)) return Forbid();
+        request = request with { AnonymousCode = await BusinessCodes.Next(db,"SV-ANON-",6,db.StudentsSet.Select(x=>x.AnonymousCode),ct) };
         var error = await Validate(request, null, ct);
         if (error is not null) return error;
         var student = new Student
         {
             StudentCode = request.StudentCode.Trim(), FullName = request.FullName.Trim(), Email = request.Email.Trim(),
-            StudentClassId = request.StudentClassId, AnonymousCode = request.AnonymousCode.Trim(), IsActive = request.IsActive
+            StudentClassId = request.StudentClassId, AnonymousCode = (request.AnonymousCode ?? "").Trim(), IsActive = request.IsActive
         };
         db.StudentsSet.Add(student);
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync(UserContext.Id(User), "STUDENT_CREATE", "Student", student.Id.ToString(), new { student.StudentCode }, ct);
         return CreatedAtAction(nameof(Get), new { id = student.Id }, student);
-    }
+    },ct);
 
     [HttpPut("{id:long}"), Authorize(Roles = "LECTURER")]
     public async Task<ActionResult> Update(long id, UpsertStudentRequest request, CancellationToken ct)
@@ -101,14 +104,13 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
         var student = await db.StudentsSet.FindAsync([id], ct);
         if (student is null) return NotFound();
         if (!await AccessScope.CanManageStudentAsync(db, User, id, ct)) return Forbid();
+        request = request with { StudentCode = student.StudentCode, AnonymousCode = student.AnonymousCode };
         if (request.StudentClassId != student.StudentClassId && request.StudentClassId is not null && !await AccessScope.CanManageStudentClassAsync(db, User, request.StudentClassId.Value, ct)) return Forbid();
         var error = await Validate(request, id, ct);
         if (error is not null) return error;
-        student.StudentCode = request.StudentCode.Trim();
         student.FullName = request.FullName.Trim();
         student.Email = request.Email.Trim();
         student.StudentClassId = request.StudentClassId;
-        student.AnonymousCode = request.AnonymousCode.Trim();
         student.IsActive = request.IsActive;
         await db.SaveChangesAsync(ct);
         await audit.WriteAsync(UserContext.Id(User), "STUDENT_UPDATE", "Student", id.ToString(), new { student.StudentCode, student.IsActive }, ct);
@@ -196,13 +198,12 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
             var email = Value("Email");
             var classCode = Value("StudentClassCode");
             var anonymousCode = Value("AnonymousCode");
-            if (anonymousCode.Length == 0 && code.Length > 0) anonymousCode = $"ANON-{code}";
             var before = errors.Count;
 
             RequiredAndLength(errors, row.Line, "StudentCode", code, 64, "MSSV");
             RequiredAndLength(errors, row.Line, "FullName", fullName, 256, "Họ tên");
             RequiredAndLength(errors, row.Line, "StudentClassCode", classCode, 64, "Mã lớp");
-            RequiredAndLength(errors, row.Line, "AnonymousCode", anonymousCode, 128, "Mã ẩn danh");
+            if (anonymousCode.Length > 128) errors.Add(new CsvImportError(row.Line, "AnonymousCode", "Mã nguồn ẩn danh không được vượt quá 128 ký tự.", false));
             if (email.Length > 256) errors.Add(new CsvImportError(row.Line, "Email", "Email không được vượt quá 256 ký tự.", false));
             else if (email.Length > 0 && !MailAddress.TryCreate(email, out _)) errors.Add(new CsvImportError(row.Line, "Email", $"Email '{email}' không hợp lệ.", false));
             if (code.Length > 0 && !seenCodes.Add(code)) errors.Add(new CsvImportError(row.Line, "StudentCode", $"MSSV {code} bị trùng trong file CSV.", true));
@@ -222,7 +223,7 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
             await using var transaction = db.Database.IsRelational()
                 ? await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
                 : null;
-
+            if(db.Database.IsSqlServer()) await db.Database.ExecuteSqlRawAsync("DECLARE @r int; EXEC @r=sys.sp_getapplock @Resource=N'HTBAM:academic-scheduling',@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=15000; IF @r<0 THROW 50001,'Student import is busy. Retry.',1;",ct);
             var classCodes = candidates.Select(x => x.StudentClassCode).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var classes = await db.StudentClassesSet.AsNoTracking().Where(x => classCodes.Contains(x.Code) && x.IsActive).ToListAsync(ct);
         var classByCode = classes.ToDictionary(x => x.Code, StringComparer.OrdinalIgnoreCase);
@@ -235,14 +236,14 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
             }
         var studentCodes = candidates.Select(x => ApiValidation.Key(x.StudentCode)).ToArray();
         var emails = candidates.Where(x => x.Email.Length > 0).Select(x => ApiValidation.Key(x.Email)).ToArray();
-        var anonymousCodes = candidates.Select(x => ApiValidation.Key(x.AnonymousCode)).ToArray();
+        var anonymousCodes = candidates.Where(x => x.AnonymousCode.Length > 0).Select(x => ApiValidation.Key(x.AnonymousCode)).ToArray();
         var existing = await db.StudentsSet.AsNoTracking().Where(x =>
             studentCodes.Contains(x.StudentCode.ToUpper()) ||
-            anonymousCodes.Contains(x.AnonymousCode.ToUpper()) ||
+            anonymousCodes.Contains(x.AnonymousCode.ToUpper()) || (x.SourceAnonymousCode != null && anonymousCodes.Contains(x.SourceAnonymousCode.ToUpper())) ||
             (x.Email != "" && emails.Contains(x.Email.ToUpper()))).ToListAsync(ct);
         var existingCodes = existing.Select(x => x.StudentCode).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var existingEmails = existing.Where(x => x.Email.Length > 0).Select(x => x.Email).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var existingAnonymousCodes = existing.Select(x => x.AnonymousCode).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var existingAnonymousCodes = existing.SelectMany(x => new[] { x.AnonymousCode, x.SourceAnonymousCode ?? "" }).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         foreach (var candidate in candidates)
         {
@@ -252,7 +253,7 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
                 errors.Add(new CsvImportError(candidate.Line, "StudentCode", $"MSSV {candidate.StudentCode} đã tồn tại.", true));
             if (candidate.Email.Length > 0 && existingEmails.Contains(candidate.Email))
                 errors.Add(new CsvImportError(candidate.Line, "Email", $"Email {candidate.Email} đã tồn tại.", true));
-            if (existingAnonymousCodes.Contains(candidate.AnonymousCode))
+            if (candidate.AnonymousCode.Length > 0 && existingAnonymousCodes.Contains(candidate.AnonymousCode))
                 errors.Add(new CsvImportError(candidate.Line, "AnonymousCode", $"Mã ẩn danh {candidate.AnonymousCode} đã tồn tại.", true));
         }
 
@@ -269,7 +270,7 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
             db.StudentsSet.Add(new Student
             {
                 StudentCode = candidate.StudentCode, FullName = candidate.FullName, Email = candidate.Email,
-                StudentClassId = classByCode[candidate.StudentClassCode].Id, AnonymousCode = candidate.AnonymousCode,
+                StudentClassId = classByCode[candidate.StudentClassCode].Id, AnonymousCode = await BusinessCodes.Next(db,"SV-ANON-",6,db.StudentsSet.Select(x=>x.AnonymousCode),ct), SourceAnonymousCode = string.IsNullOrEmpty(candidate.AnonymousCode) ? null : candidate.AnonymousCode,
                 IsActive = true, CreatedAt = createdAt
             });
         }
@@ -297,7 +298,7 @@ public sealed class StudentsController(AppDbContext db, IAuditService audit) : C
     private async Task<ActionResult?> Validate(UpsertStudentRequest request, long? id, CancellationToken ct)
     {
         var code = request.StudentCode.Trim();
-        var anonymousCode = request.AnonymousCode.Trim();
+        var anonymousCode = (request.AnonymousCode ?? "").Trim();
         var email = request.Email.Trim();
         if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(request.FullName) || string.IsNullOrWhiteSpace(anonymousCode)) return BadRequest("Thiếu MSSV/họ tên/mã ẩn danh.");
         if (email.Length > 0 && !MailAddress.TryCreate(email, out _)) return BadRequest("Email không hợp lệ.");

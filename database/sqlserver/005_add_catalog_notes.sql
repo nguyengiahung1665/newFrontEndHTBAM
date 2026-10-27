@@ -1,5 +1,3 @@
-USE HTBAM;
-GO
 
 IF OBJECT_ID('dbo.Faculties','U') IS NOT NULL AND COL_LENGTH('dbo.Faculties','Note') IS NULL ALTER TABLE dbo.Faculties ADD Note nvarchar(max) NULL;
 IF OBJECT_ID('dbo.Departments','U') IS NOT NULL AND COL_LENGTH('dbo.Departments','Note') IS NULL ALTER TABLE dbo.Departments ADD Note nvarchar(max) NULL;

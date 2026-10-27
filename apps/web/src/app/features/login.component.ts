@@ -1,22 +1,20 @@
 import { ChangeDetectionStrategy, Component, OnDestroy, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../core/auth.service';
 import { errorText } from '../shared/ui';
 
 @Component({
   standalone: true,
-  imports: [ReactiveFormsModule],
+  imports: [ReactiveFormsModule, RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="login-page">
       <section class="login-visual" aria-label="Giới thiệu HTBAM">
-        <div class="login-brand">
-          <div class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-          </div>
+        <a class="login-brand" routerLink="/" title="HTBAM - Khoa Công nghệ Thông tin HUIT">
+          <img class="huit-logo" src="assets/huit-logo.png" width="52" height="52" alt="Logo Trường Đại học Công Thương Thành phố Hồ Chí Minh" />
           <div><strong>HTBAM</strong><small>Khoa Công nghệ Thông tin</small></div>
-        </div>
+        </a>
 
         <div class="login-illustration" aria-hidden="true">
           <svg viewBox="0 0 520 360" fill="none">
@@ -46,9 +44,10 @@ import { errorText } from '../shared/ui';
 
       <main class="login-form-panel">
         <div class="login-wrap">
-          <div class="login-mobile-brand login-brand">
-            <div class="brand-mark">H</div><div><strong style="color:#0f172a">HTBAM</strong><small>Khoa Công nghệ Thông tin</small></div>
-          </div>
+          <a class="login-mobile-brand login-brand compact-brand" routerLink="/" title="HTBAM - Khoa Công nghệ Thông tin HUIT">
+            <img src="assets/huit-logo.png" alt="Logo HUIT" class="compact-brand__logo" width="26" height="26" />
+            <span class="compact-brand__copy"><strong class="compact-brand__name">HTBAM</strong><small>Khoa Công nghệ Thông tin</small></span>
+          </a>
 
           <form class="login-card" [formGroup]="form" (ngSubmit)="submit()" novalidate>
             <div>
@@ -59,27 +58,33 @@ import { errorText } from '../shared/ui';
             @if (error()) { <div class="error-box" role="alert">{{ error() }}</div> }
 
             <label>
-              Tài khoản <span class="required">*</span>
-              <input formControlName="userName" autocomplete="username" placeholder="Nhập tên đăng nhập" />
+              <span>Tài khoản <span class="required" aria-hidden="true">*</span></span>
+              <input formControlName="userName" autocomplete="username" placeholder="Nhập tên đăng nhập" required
+                [attr.aria-invalid]="form.controls.userName.touched && form.controls.userName.invalid"
+                [attr.aria-describedby]="form.controls.userName.touched && form.controls.userName.invalid ? 'username-error' : null" />
               @if (form.controls.userName.touched && form.controls.userName.hasError('required')) {
-                <small class="field-error">Vui lòng nhập tài khoản.</small>
+                <small id="username-error" class="field-error">Vui lòng nhập tài khoản.</small>
               }
             </label>
 
-            <label class="password-field">
-              Mật khẩu <span class="required">*</span>
-              <input [type]="showPassword() ? 'text' : 'password'" formControlName="password" autocomplete="current-password" placeholder="Nhập mật khẩu" />
-              <button type="button" class="password-toggle" [attr.aria-label]="showPassword() ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'" (click)="showPassword.set(!showPassword())">
+            <div class="field">
+              <label for="login-password"><span>Mật khẩu <span class="required" aria-hidden="true">*</span></span></label>
+              <div class="password-field">
+              <input id="login-password" [type]="showPassword() ? 'text' : 'password'" formControlName="password" autocomplete="current-password" placeholder="Nhập mật khẩu" required
+                [attr.aria-invalid]="form.controls.password.touched && form.controls.password.invalid"
+                [attr.aria-describedby]="form.controls.password.touched && form.controls.password.invalid ? 'password-error' : null" />
+              <button type="button" class="password-toggle" aria-controls="login-password" [attr.aria-pressed]="showPassword()" [attr.aria-label]="showPassword() ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'" (click)="showPassword.set(!showPassword())">
                 @if (showPassword()) {
                   <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.9 17.9A10 10 0 0 1 12 20c-7 0-11-8-11-8a18 18 0 0 1 5.1-5.9M9.9 4.2A9 9 0 0 1 12 4c7 0 11 8 11 8a18 18 0 0 1-2.2 3.2M1 1l22 22"/></svg>
                 } @else {
                   <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>
                 }
               </button>
+              </div>
               @if (form.controls.password.touched && form.controls.password.hasError('required')) {
-                <small class="field-error">Vui lòng nhập mật khẩu.</small>
+                <small id="password-error" class="field-error">Vui lòng nhập mật khẩu.</small>
               }
-            </label>
+            </div>
 
             <label class="check">
               <input type="checkbox" formControlName="remember" />

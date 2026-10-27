@@ -86,12 +86,9 @@ import { ModalComponent, PageTitleComponent, RowActionMenuComponent, errorText, 
     }
 
     @if (previewUrl()) {
-      <div class="modal-backdrop" (mousedown)="previewUrl.set('')">
-        <section class="modal-dialog modal-lg" (mousedown)="$event.stopPropagation()">
-          <header><h3>Xem trước video</h3><button type="button" class="modal-close" aria-label="Đóng" (click)="previewUrl.set('')">×</button></header>
-          <div class="modal-body"><video class="video-preview" controls autoplay [src]="previewUrl()"></video></div>
-        </section>
-      </div>
+      <app-modal title="Xem trước video" size="lg" (close)="previewUrl.set('')">
+        <video class="video-preview" controls autoplay tabindex="0" [src]="previewUrl()"></video>
+      </app-modal>
     }
 
     @if (pendingDelete()) {

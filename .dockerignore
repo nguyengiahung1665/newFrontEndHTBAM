@@ -1,0 +1,11 @@
+.git
+.runtime-fix-backup-*
+**/node_modules
+**/bin
+**/obj
+**/dist
+**/.angular
+**/__pycache__
+**/.env
+services/ai/models
+*.log

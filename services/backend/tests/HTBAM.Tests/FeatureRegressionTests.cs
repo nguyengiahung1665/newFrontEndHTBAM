@@ -124,7 +124,7 @@ public sealed class FeatureRegressionTests
         var students = await db.StudentsSet.OrderBy(x => x.StudentCode).ToListAsync();
         Assert.Equal(5, students.Count);
         Assert.All(students, student => Assert.Equal(10, student.StudentClassId));
-        Assert.All(students, student => Assert.StartsWith("ANON-", student.AnonymousCode));
+        Assert.All(students, student => { Assert.StartsWith("SV-", student.AnonymousCode); Assert.Null(student.SourceAnonymousCode); });
         Assert.Contains(students, student => student.FullName == "Nguyễn Văn 1");
     }
 
@@ -634,7 +634,7 @@ public sealed class FeatureRegressionTests
     }
 
     [Fact]
-    public async Task Faculty_head_transfer_keeps_history_and_only_one_active_head()
+    public async Task Faculty_head_cannot_transfer_own_position_without_admin()
     {
         await using var db = CreateDb();
         var ids = await SeedScopeFixture(db);
@@ -644,11 +644,10 @@ public sealed class FeatureRegressionTests
 
         var result = await controller.TransferFacultyHead(new ManagementAssignmentsController.AssignFacultyHeadRequest(ids.TeacherA, ids.Faculty1, "transfer"), CancellationToken.None);
 
-        Assert.IsType<OkObjectResult>(result);
+        Assert.IsType<ForbidResult>(result);
         var all = await db.ManagementAssignmentsSet.Where(x => x.PositionType == "FACULTY_HEAD" && x.FacultyId == ids.Faculty1).ToListAsync();
-        Assert.Equal(2, all.Count);
+        Assert.Single(all);
         Assert.Single(all, x => x.IsActive);
-        Assert.Contains(all, x => !x.IsActive && x.EffectiveTo != null);
     }
 
     [Fact]
@@ -718,7 +717,7 @@ public sealed class FeatureRegressionTests
             CancellationToken.None));
         var body = Assert.IsType<ApiErrorResponse>(duplicate.Value);
         Assert.Equal("DUPLICATE_FIELDS", body.Code);
-        Assert.Equal(["anonymousCode", "email", "studentCode"], body.Errors!.Select(x => x.Field).OrderBy(x => x).ToArray());
+        Assert.Equal(["email", "studentCode"], body.Errors!.Select(x => x.Field).OrderBy(x => x).ToArray());
 
         var codeDuplicate = Assert.IsType<ConflictObjectResult>(await controller.Create(
             new UpsertStudentRequest(" sv001 ", "Other", "unique-code@example.test", 10, "ANON-CODE", true),
@@ -728,22 +727,22 @@ public sealed class FeatureRegressionTests
             new UpsertStudentRequest("SV-EMAIL", "Other", " SV001@EXAMPLE.TEST ", 10, "ANON-EMAIL", true),
             CancellationToken.None));
         AssertDuplicate(emailDuplicate, "STUDENT_EMAIL_DUPLICATE", "email", "Email SV001@EXAMPLE.TEST đã được sử dụng.");
-        var anonymousDuplicate = Assert.IsType<ConflictObjectResult>(await controller.Create(
+        Assert.IsType<CreatedAtActionResult>(await controller.Create(
             new UpsertStudentRequest("SV-ANON", "Other", "unique-anon@example.test", 10, " anon-001 ", true),
             CancellationToken.None));
-        AssertDuplicate(anonymousDuplicate, "STUDENT_ANONYMOUS_CODE_DUPLICATE", "anonymousCode", "Mã ẩn danh 'anon-001' đã tồn tại.");
+        Assert.StartsWith("SV-", (await db.StudentsSet.SingleAsync(x => x.StudentCode == "SV-ANON")).AnonymousCode);
 
         var selfUpdate = await controller.Update(20,
             new UpsertStudentRequest(" sv001 ", "Existing", " SV001@EXAMPLE.TEST ", 10, " anon-001 ", true),
             CancellationToken.None);
         Assert.IsType<NoContentResult>(selfUpdate);
 
-        db.StudentsSet.Add(new Student { Id = 21, StudentCode = "SV002", FullName = "Other", Email = "sv002@example.test", StudentClassId = 10, AnonymousCode = "ANON-002", IsActive = true });
+        db.StudentsSet.Add(new Student { Id = 30, StudentCode = "SV002", FullName = "Other", Email = "sv002@example.test", StudentClassId = 10, AnonymousCode = "ANON-002", IsActive = true });
         await db.SaveChangesAsync();
-        var otherConflict = Assert.IsType<ConflictObjectResult>(await controller.Update(20,
+        Assert.IsType<NoContentResult>(await controller.Update(20,
             new UpsertStudentRequest("sv002", "Existing", "sv001@example.test", 10, "ANON-001", true),
             CancellationToken.None));
-        AssertDuplicate(otherConflict, "STUDENT_CODE_DUPLICATE", "studentCode", "MSSV sv002 đã tồn tại.");
+        Assert.Equal("SV001", (await db.StudentsSet.FindAsync(20L))!.StudentCode);
     }
 
     [Fact]
@@ -756,9 +755,9 @@ public sealed class FeatureRegressionTests
         await db.SaveChangesAsync();
         var controller = WithAdmin(new CatalogsController(db, new AuditSpy()));
 
-        var duplicate = Assert.IsType<ConflictObjectResult>(await controller.AddRoom(
-            new CatalogsController.RoomReq(" a101 ", "Other", null, 20, null), CancellationToken.None));
-        AssertDuplicate(duplicate, "ROOM_CODE_DUPLICATE", "code");
+        Assert.IsType<OkObjectResult>(await controller.AddRoom(
+            new CatalogsController.RoomReq(" a101 ", "Other", null, 20, null, Campus:"CS1",Building:"A",RoomNumber:"102"), CancellationToken.None));
+        Assert.StartsWith("PH-", (await db.Rooms.SingleAsync(x => x.Name == "Other")).Code);
         Assert.IsType<NoContentResult>(await controller.UpdateRoom(1,
             new CatalogsController.RoomReq(" a101 ", "Room", null, 20, null), CancellationToken.None));
         Assert.IsType<NoContentResult>(await controller.ReactivateCatalog("rooms", 2, CancellationToken.None));
@@ -766,7 +765,7 @@ public sealed class FeatureRegressionTests
     }
 
     [Fact]
-    public async Task Catalog_unique_codes_return_entity_specific_conflicts()
+    public async Task Catalog_codes_are_generated_immutable_and_legacy_class_writes_are_blocked()
     {
         await using var db = CreateDb();
         await SeedFacultyHead(db);
@@ -781,22 +780,24 @@ public sealed class FeatureRegressionTests
         var academic = WithUser(new CatalogsController(db, new AuditSpy()), 100, "LECTURER");
         var admin = WithAdmin(new CatalogsController(db, new AuditSpy()));
 
-        AssertDuplicate(Assert.IsType<ConflictObjectResult>(await academic.UpdateFaculty(1,
-            new CatalogsController.FacultyReq(" f2 ", "Faculty", null), CancellationToken.None)), "FACULTY_CODE_DUPLICATE", "code");
-        AssertDuplicate(Assert.IsType<ConflictObjectResult>(await academic.AddDepartment(
-            new CatalogsController.DepartmentReq(" d1 ", "Department", 1, null), CancellationToken.None)), "DEPARTMENT_CODE_DUPLICATE", "code");
-        AssertDuplicate(Assert.IsType<ConflictObjectResult>(await academic.AddStudentClass(
-            new CatalogsController.StudentClassReq(" sc1 ", "Class", 1, 2026, null), CancellationToken.None)), "STUDENT_CLASS_CODE_DUPLICATE", "code");
-        AssertDuplicate(Assert.IsType<ConflictObjectResult>(await academic.AddCourse(
-            new CatalogsController.CourseReq(" c1 ", "Course", 1, 3, null), CancellationToken.None)), "COURSE_CODE_DUPLICATE", "code");
-        AssertDuplicate(Assert.IsType<ConflictObjectResult>(await academic.AddTeacher(
-            new CatalogsController.TeacherReq(" gv1 ", "Teacher", "", null, 1, null), CancellationToken.None)), "TEACHER_CODE_DUPLICATE", "teacherCode");
-        AssertDuplicate(Assert.IsType<ConflictObjectResult>(await academic.AddClass(
-            new CatalogsController.ClassReq(" cs1 ", "Section", 20, 30, "HK1", "2026", null), CancellationToken.None)), "CLASS_SECTION_CODE_DUPLICATE", "code");
-        AssertDuplicate(Assert.IsType<ConflictObjectResult>(await admin.AddRoom(
-            new CatalogsController.RoomReq(" r1 ", "Room", null, 10, null), CancellationToken.None)), "ROOM_CODE_DUPLICATE", "code");
-        AssertDuplicate(Assert.IsType<ConflictObjectResult>(await admin.AddCamera(
-            new CatalogsController.CameraReq(" cam1 ", "Camera", 50, "rtsp://camera.test/other", null), CancellationToken.None)), "CAMERA_CODE_DUPLICATE", "code");
+        Assert.IsType<NoContentResult>(await academic.UpdateFaculty(1,
+            new CatalogsController.FacultyReq(" f2 ", "Faculty", null), CancellationToken.None));
+        Assert.Equal("F1", (await db.FacultiesSet.FindAsync(1L))!.Code);
+        Assert.IsType<OkObjectResult>(await academic.AddDepartment(new(" d1 ", "Department", 1, null), CancellationToken.None));
+        (await db.DepartmentsSet.FindAsync(1L))!.Code="BM-CNPM";await db.SaveChangesAsync();
+        Assert.IsType<OkObjectResult>(await academic.AddStudentClass(new(" sc1 ", "Class", 1, 2026, null, DepartmentId:1), CancellationToken.None));
+        (await db.DepartmentsSet.FindAsync(1L))!.Code="BM-CNPM";await db.SaveChangesAsync();
+        Assert.IsType<OkObjectResult>(await academic.AddCourse(new(null, "Course", 1, 3, null, StartAcademicYear:"2026-2027", StartSemester:"HK1"), CancellationToken.None));
+        Assert.IsType<OkObjectResult>(await academic.AddTeacher(new(" gv1 ", "Teacher", "", null, 1, null), CancellationToken.None));
+        Assert.IsType<ConflictObjectResult>(await academic.AddClass(new(" cs1 ", "Section", 20, 30, "HK1", "2026", null), CancellationToken.None));
+        Assert.IsType<OkObjectResult>(await admin.AddRoom(new(" r1 ", "Room", null, 10, null, Campus:"CS1",Building:"A",RoomNumber:"101"), CancellationToken.None));
+        (await db.Rooms.FindAsync(50L))!.Code="PH-CS1-A-102";await db.SaveChangesAsync();
+        Assert.IsType<OkObjectResult>(await admin.AddCamera(new(" cam1 ", "Camera", 50, "rtsp://camera.test/other", null), CancellationToken.None));
+        Assert.Contains(await db.DepartmentsSet.ToListAsync(), x => x.Code.StartsWith("BM-"));
+        Assert.Contains(await db.StudentClassesSet.ToListAsync(), x => x.Code.StartsWith("LSH-"));
+        Assert.Contains(await db.Courses.ToListAsync(), x => x.Code.StartsWith("MH-"));
+        Assert.Contains(await db.Teachers.ToListAsync(), x => x.TeacherCode.StartsWith("GV-"));
+        Assert.Single(await db.ClassSections.ToListAsync());
     }
 
     [Fact]
@@ -819,9 +820,9 @@ public sealed class FeatureRegressionTests
         Assert.IsType<NoContentResult>(await academic.UpdateFaculty(1, new(" f1 ", "Faculty 1", null), CancellationToken.None));
         Assert.IsType<NoContentResult>(await academic.UpdateDepartment(1, new(" d1 ", "Department 1", 1, null), CancellationToken.None));
         Assert.IsType<NoContentResult>(await academic.UpdateStudentClass(10, new(" sc1 ", "Class", 1, 2026, null), CancellationToken.None));
-        Assert.IsType<NoContentResult>(await academic.UpdateCourse(20, new(" c1 ", "Course", 1, 3, null), CancellationToken.None));
+        Assert.IsType<NoContentResult>(await academic.UpdateCourse(20, new(" c1 ", "Course", 1, 3, null, StartAcademicYear:"2026-2027", StartSemester:"HK1"), CancellationToken.None));
         Assert.IsType<NoContentResult>(await academic.UpdateTeacher(30, new(" gv1 ", "Teacher", "teacher@example.test", 200, 1, null), CancellationToken.None));
-        Assert.IsType<NoContentResult>(await academic.UpdateClass(40, new(" cs1 ", "Section", 20, 30, "HK1", "2026", null), CancellationToken.None));
+        Assert.IsType<ConflictObjectResult>(await academic.UpdateClass(40, new(" cs1 ", "Section", 20, 30, "HK1", "2026", null), CancellationToken.None));
 
         var admin = WithAdmin(new CatalogsController(db, new AuditSpy()));
         Assert.IsType<NoContentResult>(await admin.UpdateRoom(50, new(" r1 ", "Room", null, 20, null), CancellationToken.None));
@@ -877,8 +878,8 @@ public sealed class FeatureRegressionTests
         var controller = WithUser(new AttendancePoliciesController(db, new AuditSpy()), 100, "LECTURER");
         var request = new AttendancePoliciesController.Req(" default ", "Other", .8m, .5m, 10, 5, 0, "v1");
 
-        var duplicate = Assert.IsType<ConflictObjectResult>(await controller.Create(request, CancellationToken.None));
-        AssertDuplicate(duplicate, "ATTENDANCE_POLICY_CODE_DUPLICATE", "code");
+        Assert.IsType<OkObjectResult>(await controller.Create(request, CancellationToken.None));
+        Assert.StartsWith("CC-", (await db.AttendancePoliciesSet.SingleAsync(x => x.Id != 20)).Code);
         Assert.IsType<NoContentResult>(await controller.Deactivate(20, CancellationToken.None));
         Assert.False((await db.AttendancePoliciesSet.FindAsync(20L))!.IsActive);
         Assert.IsType<NoContentResult>(await controller.Reactivate(20, CancellationToken.None));

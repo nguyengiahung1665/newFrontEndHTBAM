@@ -1,5 +1,6 @@
 **/bin/
 **/obj/
+**/TestResults/
 **/node_modules/
 **/.vite/
 **/__pycache__/

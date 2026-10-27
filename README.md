@@ -7,7 +7,7 @@ Bộ source nền chính thức cho KLCN **Hệ thống quản lý và phân tí
 ## Phạm vi bản này
 Bản này hoàn thiện các phần **không phụ thuộc model đã train**: Web Angular, ASP.NET Core API, SQL Server schema, JWT/RBAC, quản lý danh mục, sinh viên, roster, camera/video, Face Enrollment storage, Session lifecycle, realtime contract/SignalR, stable identity storage, alert/rule, attendance policy, history, reports, Excel/PDF, search, audit và UI responsive.
 
-Các khối AI/CV production vẫn cố ý ở trạng thái contract-only vì model chưa train/tích hợp: YOLO, BoT-SORT, ArcFace, OSNet, Stable Identity Resolver, MediaPipe feature extractor, HTBAM (GRU + Transformer), smoothing và KMeans/Intelligent KMeans/pseudo-label pipeline. LLM Provider là module backend độc lập và đã được tích hợp để diễn giải summary có sẵn; hệ thống **không sinh dữ liệu AI/CV giả**.
+Các khối AI/CV production vẫn cố ý ở trạng thái contract-only vì model chưa train/tích hợp: YOLO, BoT-SORT, ArcFace, OSNet, Stable Identity Resolver, MediaPipe feature extractor, HTBAM (GRU + Transformer), smoothing và KMeans/Intelligent KMeans/pseudo-label pipeline. LLM Provider là module backend độc lập và đã được tích hợp để diễn giải summary có sẵn; luồng inference **không sinh kết quả AI/CV giả**. Development seed có fixture tổng hợp được gắn nhãn DEMO riêng để kiểm thử báo cáo, không phải kết quả inference thực tế.
 
 Flutter chưa nằm trong phạm vi hiện tại theo yêu cầu triển khai hiện tại; Backend API được giữ reusable để thêm Flutter sau.
 
@@ -42,20 +42,16 @@ docs/                     workflows, requirements, integration, runbook
 tests/                    static/contract/workflow/requirements checks
 ```
 
-## Database khi bạn CHƯA từng chạy v1/v2
-Chỉ chạy theo thứ tự:
-1. `database/001_schema.sql`
-2. `database/002_seed.sql`
-3. `database/003_dev_sample.sql` — tùy chọn, nên dùng khi test
+## Docker, database và migration
 
-**Không chạy `database/legacy/004_upgrade_v1_to_v2.sql`.**
+Từ `infra`: chạy `docker compose build backend web`, rồi `docker compose up -d --force-recreate`.
+Compose chờ SQL healthy, chạy migration có lịch sử/checksum và seed trước khi mở backend/web. Giữ volume SQL hiện có; không cần xóa dữ liệu để nâng cấp. Nguồn SQL chuẩn là `database/sqlserver`; script 003 và legacy không được tự chạy.
+
+Xem [DATABASE_MIGRATION_AND_DEVELOPMENT_SEED.md](docs/DATABASE_MIGRATION_AND_DEVELOPMENT_SEED.md) để biết cách chạy lại, tắt seed, tài khoản và kết quả kiểm thử thực tế.
 
 ## Tài khoản Development Seeder
-Khi backend chạy `Development` với `Seed:Development=true`:
-- `admin / Admin@123456`
-- `lecturer / Lecturer@123456`
-
-Đổi mật khẩu sau lần đăng nhập đầu nếu dùng ngoài demo.
+Khi lệnh seed chạy với `ASPNETCORE_ENVIRONMENT=Development` và `Seed__Development=true`, có các tài khoản `demo.admin`, `demo.dean`, `demo.head1`–`demo.head3`, `demo.lecturer1`–`demo.lecturer6`, `demo.editor`, `demo.viewer`.
+Mật khẩu lấy từ `SEED_DEFAULT_PASSWORD`; fallback cục bộ là `HTBAM-Local-Demo!2026#`, chỉ dành cho Development. Seed không đổi mật khẩu tài khoản đã có. Lịch và báo cáo mang nhãn DEMO; lịch học kỳ mẫu không phải lịch chính thức HUIT.
 
 ## Trạng thái AI hiện tại
 `GET /capabilities` ở AI service trả:

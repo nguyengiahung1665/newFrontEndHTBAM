@@ -44,7 +44,7 @@ import { BackButtonComponent, ModalComponent, PageTitleComponent, behaviorText, 
           @for (metric of behaviorMetrics(); track metric.label) {
             <div class="metric-row"><span>{{ metric.label }}</span><div class="progress-track"><div class="progress-value" [style.width.%]="metric.value" [style.background]="metric.color"></div></div><strong>{{ metric.value }}%</strong></div>
           }
-          <div class="service-grid" style="grid-template-columns:1fr 1fr;margin-top:22px">
+          <div class="service-grid service-grid-two" style="margin-top:22px">
             <div class="service-card"><span class="status-dot" [style.background]="dashboard().modelReady ? '#16a34a' : '#dc2626'"></span><div><strong>Mô hình</strong><small>{{ dashboard().modelReady ? 'Sẵn sàng' : 'Chưa sẵn sàng' }}</small></div></div>
             <div class="service-card"><span class="status-dot" [style.background]="dashboard().aiHealth === 'ONLINE' ? '#16a34a' : '#dc2626'"></span><div><strong>Dịch vụ AI</strong><small>{{ statusText(dashboard().aiHealth) }}</small></div></div>
           </div>
